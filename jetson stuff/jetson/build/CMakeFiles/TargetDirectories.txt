@@ -1,0 +1,3 @@
+/home/gtpl/Projects/Test/build/CMakeFiles/hx711_reader.dir
+/home/gtpl/Projects/Test/build/CMakeFiles/edit_cache.dir
+/home/gtpl/Projects/Test/build/CMakeFiles/rebuild_cache.dir

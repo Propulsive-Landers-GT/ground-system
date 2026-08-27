@@ -1,0 +1,37 @@
+open OISO
+wait 21 seconds
+blip OFILL (many times)
+
+
+
+ENSURE MTV ANGLE IS ALREADY SET TO START ANGLE
+automatic control:
+close OISO
+
+wait 21 seconds?? (check if close time is same as open time)
+open LFVENT
+
+wait 1 second
+close LFVENT
+
+wait 0.5 second
+open PUISO
+
+wait 0.5 second
+open PUFILL
+
+wait 1 second
+open OFILL
+
+wait 0.5 second
+open OMV
+
+[angle profile]
+
+close OFILL
+
+wait 0.5 second
+fully open MTV
+wait 2 second
+
+exit to manual control (end automatic control)
