@@ -1,0 +1,133 @@
+/* Design tokens. Colour is reserved for state; the chrome stays in the slate ramp.
+   Type is B612 / B612 Mono, the Airbus cockpit-display family: built for glanceable numerals. */
+
+:root {
+  --font-ui: "B612", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "B612 Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* B612 digits are uniform width (checked), so readouts use it; Mono is kept for ids and logs. */
+  --font-num: "B612", system-ui, sans-serif;
+
+  --fs-xs: 10px;
+  --fs-sm: 11px;
+  --fs-md: 12px;
+  --fs-lg: 14px;
+  --fs-xl: 19px;
+  --fs-2xl: 26px;
+
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 6px;
+  --sp-4: 8px;
+  --sp-5: 12px;
+  --sp-6: 16px;
+
+  --radius: 3px;
+  --rail-w: 276px;
+}
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #10141a;
+  --panel: #171c24;
+  --panel-2: #1e252f;
+  --inset: #0c0f14;
+  --line: #28313d;
+  --line-strong: #3b4757;
+  --text: #dfe5ec;
+  --text-2: #a0acba;
+  --text-3: #6f7c8c;
+
+  --ok: #3fbf7a;
+  --ok-bg: #12351f;
+  --caution: #f0b429;
+  --caution-bg: #3b2d08;
+  --warn: #ff5d55;
+  --warn-bg: #4a1513;
+  --warn-solid: #c9302a;
+  --info: #69b3e7;
+  --info-bg: #14304a;
+
+  --valve-open: #2fb36b;
+  --valve-closed: #e0453d;
+  --valve-unknown: #7c8794;
+
+  --vehicle-bg: #f0b429;
+  --vehicle-fg: #1a1303;
+
+  --focus: #9fd0ff;
+
+  /* plot / scene series: categorical, kept away from the state red/green */
+  --s1: #6cb8f0;
+  --s2: #f2a65a;
+  --s3: #b79cf2;
+  --s4: #5fd0c5;
+  --s5: #f08bb4;
+  --s6: #d8d36a;
+  --s7: #9aa7b5;
+  --s-ref: #d8d36a;
+  --s-truth: #9aa7b5;
+  --plot-grid: #222a35;
+
+  --scene-bg: #0c1016;
+  --scene-grid: #1c242e;
+  --scene-grid-strong: #33404f;
+  --scene-body: #cfd6de;
+  --scene-plume: #ffb347;
+
+  --pipe: #4a5666;
+  --pipe-live: #b9c6d4;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #e9edf1;
+  --panel: #fbfcfd;
+  --panel-2: #f0f3f6;
+  --inset: #e3e8ed;
+  --line: #d2d9e0;
+  --line-strong: #a9b4c0;
+  --text: #17202a;
+  --text-2: #465362;
+  --text-3: #6c7886;
+
+  --ok: #15803d;
+  --ok-bg: #d9f2e1;
+  --caution: #9a6700;
+  --caution-bg: #fbecc4;
+  --warn: #c62822;
+  --warn-bg: #fbdcda;
+  --warn-solid: #c62822;
+  --info: #1d6fb8;
+  --info-bg: #dcebf8;
+
+  --valve-open: #1e9a57;
+  --valve-closed: #d23a32;
+  --valve-unknown: #8a95a1;
+
+  --vehicle-bg: #e39b00;
+  --vehicle-fg: #1a1303;
+
+  --focus: #1d6fb8;
+
+  --s1: #1d6fb8;
+  --s2: #c2600c;
+  --s3: #6d4fc4;
+  --s4: #0f8a80;
+  --s5: #c0397a;
+  --s6: #857d0c;
+  --s7: #5d6875;
+  --s-ref: #857d0c;
+  --s-truth: #5d6875;
+  --plot-grid: #e1e6eb;
+
+  --scene-bg: #dfe5ea;
+  --scene-grid: #cbd3db;
+  --scene-grid-strong: #9aa6b3;
+  --scene-body: #f5f7f9;
+  --scene-plume: #e07b00;
+
+  --pipe: #8d99a6;
+  --pipe-live: #26313d;
+}

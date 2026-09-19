@@ -17,6 +17,8 @@ use crate::messages::{LogRecord, SentCommand, ServerMessage};
 use crate::recorder::{unix_time_s, Recorder};
 
 const VERSION_WARNING_INTERVAL: Duration = Duration::from_secs(5);
+/// An outage longer than this may have been a vehicle reboot, so params are re-requested.
+const REBOOT_GAP: Duration = Duration::from_secs(5);
 
 pub struct LiveLink {
     pub socket: UdpSocket,
@@ -44,6 +46,7 @@ impl LiveLink {
             stats: LinkStats::default(),
             next_seq: 1,
             connected: false,
+            disconnected_at: None,
             last_version_warning: None,
         };
 
@@ -79,6 +82,7 @@ struct LinkState {
     stats: LinkStats,
     next_seq: u32,
     connected: bool,
+    disconnected_at: Option<Instant>,
     last_version_warning: Option<Instant>,
 }
 
@@ -112,9 +116,15 @@ impl LinkState {
         if !self.connected {
             self.connected = true;
             info!("vehicle connected: receiving telemetry from {from}");
-            // The vehicle only sends params on request or change; ask once per
-            // connection so browsers always have them.
-            self.send_command(CommandKind::RequestParams).await;
+            // The vehicle only sends params on request or change, so ask when it first
+            // appears. A short dropout (a stalled flight loop, a radio fade) is the same
+            // vehicle with the same params; only a long one could have been a reboot.
+            let rebooted = self
+                .disconnected_at
+                .is_none_or(|t| now.duration_since(t) > REBOOT_GAP);
+            if rebooted {
+                self.send_command(CommandKind::RequestParams).await;
+            }
         }
     }
 
@@ -122,6 +132,7 @@ impl LinkState {
         let now = Instant::now();
         if self.connected && !self.stats.connected(now) {
             self.connected = false;
+            self.disconnected_at = Some(now);
             warn!("vehicle disconnected: no telemetry for over 1 s");
         }
 

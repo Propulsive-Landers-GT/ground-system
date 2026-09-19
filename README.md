@@ -17,6 +17,10 @@ Works the same against the simulator, a bench vehicle, or a flight.
  sim               ─┘
 ```
 
+![Flight view, driven by the simulator running the real Lander flight state machine](docs/flight-view.png)
+
+![Test stand view](docs/stand-view.png)
+
 How the pieces fit, the link rules and the WebSocket API are in [docs/DESIGN.md](docs/DESIGN.md).
 
 ## Layout
@@ -52,8 +56,11 @@ Until the link is merged it lives on the `ground-station-link` branch of both
 
 ```sh
 cd ../simulations/RocketSimulation/rust_rocket_sim
-cargo run --release -- --ground-station
+cargo run --release -- --ground-station      # add --loop to return to Standby after each flight
 ```
+
+`Lander` and the sim link against OpenBLAS: `brew install openblas` on macOS,
+`apt install libopenblas-dev` on Linux.
 
 ### Against the vehicle
 
