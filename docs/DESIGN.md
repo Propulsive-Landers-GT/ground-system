@@ -47,6 +47,18 @@ the same code that flies.
 The UI keeps the two visibly distinct. Loss of link triggers no automatic action yet: the vehicle
 reports `link_age_s` and the policy is left to the team.
 
+### Known limits
+
+- One bridge per vehicle. The vehicle follows the last valid uplink source, so two bridges would
+  steal telemetry from each other. Several people watching means several browsers on one bridge.
+- An empty `TrajectoryMsg` (`positions: []`) means "no active trajectory" (Hover, Landed).
+- `time_s` restarts from zero when the vehicle reboots; there is no boot id yet. The bridge treats
+  a large backwards jump in `seq` as a restart.
+- Nothing clears `terminated` or leaves `Landed`: restart the flight software between runs.
+- A guidance solve that fails can block the flight loop for seconds. From the ground that looks
+  like a link dropout (`link_age_s` and last-rx age both spike).
+- No authentication. Keep the link on an isolated network.
+
 ## WebSocket API (`ws://<bridge>:8080/ws`)
 
 JSON is the serde default for the `gs-protocol` types: unit enum variants are strings (`"Hover"`),
