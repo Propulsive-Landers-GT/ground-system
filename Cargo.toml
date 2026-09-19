@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = ["crates/gs-protocol"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Propulsive-Landers-GT/ground-station"
+
+[workspace.dependencies]
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+postcard = { version = "1.0", default-features = false }
