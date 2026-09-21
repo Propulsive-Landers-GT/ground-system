@@ -13,8 +13,8 @@
 | `gs-protocol` | `crates/gs-protocol` | Wire types + postcard encoding + `VehicleLink` UDP helper. The single source of truth for the link. |
 | `gs-bridge` | `crates/gs-bridge` | Ground-side server. Owns the UDP socket, heartbeats the vehicle, fans telemetry out to browsers, forwards commands, records the session, serves the UI. Also contains `gs-mock`, a fake vehicle for UI work. |
 | web UI | `web/` | Vite + React + TypeScript. Flight view, test-stand view, command panel. |
-| vehicle side | `monoprop-flight-software` branch `ground-station-link` | `Lander` gains a `telemetry` module, an `Abort` path, phase overrides, live tuning and jog. |
-| sim side | `simulations` branch `ground-station-link` | `rust_rocket_sim` gains a real-time `--ground-station` mode that uses the same Lander telemetry code, plus truth state and stand telemetry from the propulsion model. |
+| vehicle side | `monoprop-flight-software`, `Lander/src/telemetry.rs` | `GroundLink`: telemetry out, commands in. The FSM has an abort path, phase overrides, live tuning and jog. |
+| sim side | `simulations`, `rust_rocket_sim --ground-station` | Real-time mode that uses the same Lander telemetry code, plus truth state and stand telemetry from the propulsion model. |
 
 The sim steps the *real* `Lander::fsm::FlightStateMachine`, so the telemetry builder and command
 handler live in `Lander` and the sim reuses them. Anything the GUI does against the sim exercises

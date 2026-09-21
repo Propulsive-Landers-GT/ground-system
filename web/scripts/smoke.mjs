@@ -14,7 +14,8 @@ page.on("pageerror", (e) => errors.push(e.message));
 const results = [];
 const check = (name, ok, extra = "") => { results.push({ name, ok }); console.log(`${ok ? "PASS" : "FAIL"}  ${name} ${extra}`); };
 const log = () => page.locator(".commands .cmd-row").allInnerTexts();
-const phase = () => page.locator('.step[aria-current="step"] .step-name').innerText();
+// textContent, not innerText: the stepper is styled uppercase and innerText returns the transformed text.
+const phase = () => page.locator('.step[aria-current="step"] .step-name').textContent();
 const btn = (name) => page.getByRole("button", { name, exact: true });
 
 await page.goto(url);

@@ -28,7 +28,7 @@ const cssVar = (n: string) => getComputedStyle(document.documentElement).getProp
 function readPalette(): Palette {
   return {
     bg: cssVar("--scene-bg"), grid: cssVar("--scene-grid"), gridStrong: cssVar("--scene-grid-strong"),
-    body: cssVar("--scene-body"), accent: cssVar("--s2"), ref: cssVar("--s-ref"), trail: cssVar("--s1"),
+    body: cssVar("--scene-body"), accent: cssVar("--scene-accent"), ref: cssVar("--s-ref"), trail: cssVar("--s1"),
     truth: cssVar("--s-truth"), plume: cssVar("--scene-plume"), pad: cssVar("--text-2"),
   };
 }
@@ -84,7 +84,7 @@ function LanderMesh({ color, accent, ghost, gimbalRef, children }: { color: stri
           </mesh>
           <mesh position={[0, 0, 1.0]} rotation={[X90, 0, 0]}>
             <cylinderGeometry args={[0.25, 0.25, 0.05, 24]} />
-            <meshStandardMaterial color="#3a424d" roughness={0.6} />
+            <meshStandardMaterial color="#2c4b7a" roughness={0.6} />
           </mesh>
         </>
       )}

@@ -1,6 +1,7 @@
 import { setTheme, useTick, useUi, type View } from "../../store/ui";
 import { tele } from "../../store/telemetry";
 import { clock, num } from "../../lib/format";
+import mark from "../../assets/gtpl-mark.png";
 
 const TABS: { id: View; label: string; key: string }[] = [
   { id: "flight", label: "Flight", key: "1" },
@@ -13,8 +14,9 @@ export function StatusBar() {
   return (
     <header className="statusbar">
       <div className="brand" aria-label="GT Propulsive Landers ground station">
-        <span className="brand-mark" aria-hidden="true" />
-        GTPL
+        <img className="brand-mark" src={mark} alt="" width={30} height={30} />
+        <span className="brand-name">GTPL</span>
+        <span className="brand-sub">Ground Station</span>
       </div>
       <nav className="tabs" role="tablist" aria-label="Views">
         {TABS.map((t) => (
@@ -25,6 +27,7 @@ export function StatusBar() {
             aria-selected={view === t.id}
             aria-controls={`panel-${t.id}`}
             className="tab"
+            title={`Shortcut: ${t.key}`}
             onClick={() => useUi.setState({ view: t.id })}
           >
             <kbd>{t.key}</kbd>
@@ -81,7 +84,7 @@ function LinkBlock() {
         </span>
       ) : (
         <>
-          <span className="kv">
+          <span className="kv kv-addr" title="Vehicle address">
             <span className="k">vehicle</span>
             <span className="v">{link?.vehicle_addr ?? "—"}</span>
           </span>

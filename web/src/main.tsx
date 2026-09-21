@@ -1,8 +1,9 @@
 import "./three-setup";
-import "@fontsource/b612/400.css";
-import "@fontsource/b612/700.css";
-import "@fontsource/b612-mono/400.css";
-import "@fontsource/b612-mono/700.css";
+// Bundled, not linked: the console runs on field networks with no internet. Latin subset covers − — ≈ ° ².
+import "@fontsource/montserrat/latin-400.css";
+import "@fontsource/montserrat/latin-500.css";
+import "@fontsource/montserrat/latin-600.css";
+import "@fontsource/montserrat/latin-700.css";
 import "uplot/dist/uPlot.min.css";
 import "./styles/tokens.css";
 import "./styles/app.css";

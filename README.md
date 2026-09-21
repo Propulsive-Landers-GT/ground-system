@@ -51,11 +51,10 @@ Open <http://localhost:8080>, then Arm and Launch.
 ### Against the simulator
 
 The sim runs the real `Lander` flight state machine, so this is the closest thing to flying.
-Until the link is merged it lives on the `ground-station-link` branch of both
-`simulations` and `monoprop-flight-software`, checked out side by side with this repo.
 
 ```sh
-cd ../simulations/RocketSimulation/rust_rocket_sim
+# in a checkout of Propulsive-Landers-GT/simulations
+cd RocketSimulation/rust_rocket_sim
 cargo run --release -- --ground-station      # add --loop to return to Standby after each flight
 ```
 

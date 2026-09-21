@@ -1,12 +1,13 @@
-/* Design tokens. Colour is reserved for state; the chrome stays in the slate ramp.
-   Type is B612 / B612 Mono, the Airbus cockpit-display family: built for glanceable numerals. */
+/* Design tokens. Shares the gtpl website's system (Montserrat, near-black/navy surfaces, GT gold) so the
+   console reads as the same team's product. Gold means brand/active only; ok/caution/warn stay green/orange/red
+   so a state colour is never mistaken for chrome. Montserrat digits are proportional: every live number needs tnum. */
 
 :root {
-  --font-ui: "B612", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "B612 Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-
-  /* B612 digits are uniform width (checked), so readouts use it; Mono is kept for ids and logs. */
-  --font-num: "B612", system-ui, sans-serif;
+  --font-ui: "Montserrat", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Same family for numbers; app.css turns on tabular figures wherever values update. */
+  --font-num: "Montserrat", system-ui, sans-serif;
+  /* System mono only for seq ids and log timestamps. */
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --fs-xs: 10px;
   --fs-sm: 11px;
@@ -22,112 +23,144 @@
   --sp-5: 12px;
   --sp-6: 16px;
 
-  --radius: 3px;
+  --radius: 8px;
+  --radius-sm: 4px;
+  --pill: 999px;
+  --eyebrow-track: 0.16em;
+
+  /* Brand constants, identical in both themes */
+  --gold: #ffd600;
+  --on-gold: #111827;
+  --navy: #1e3a5f;
+  --navy-alt: #2c4b7a;
   --rail-w: 276px;
+}
+
+/* The header is the website's near-black nav bar in both themes, so it carries its own copy of the dark chrome. */
+:root,
+:root[data-theme="dark"],
+:root[data-theme="light"] .statusbar {
+  --panel: #07111f;
+  --panel-2: #111827;
+  --inset: #040506;
+  --line: rgba(255, 255, 255, 0.12);
+  --line-strong: rgba(255, 255, 255, 0.36);
+  --text: #ffffff;
+  --text-2: #c2c7cf;
+  --text-3: #8a8f98;
+
+  --accent: #ffd600;
+  --accent-fg: #111827;
+  --accent-bg: rgba(255, 214, 0, 0.14);
+  --select: #2c4b7a;
+  --select-fg: #ffffff;
+  --select-line: #5f86c2;
+  --focus: #ffd600;
+
+  --ok: #3fcf82;
+  --ok-bg: #0d2f1d;
+  --caution: #ff8a1f;
+  --caution-bg: #3d1f06;
+  --on-caution: #1a0d00;
+  --warn: #ff5a5f;
+  --warn-bg: #481216;
+  --warn-solid: #c9302a;
+  --info: #8fb8f2;
+  --info-bg: #12233b;
 }
 
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --bg: #10141a;
-  --panel: #171c24;
-  --panel-2: #1e252f;
-  --inset: #0c0f14;
-  --line: #28313d;
-  --line-strong: #3b4757;
-  --text: #dfe5ec;
-  --text-2: #a0acba;
-  --text-3: #6f7c8c;
-
-  --ok: #3fbf7a;
-  --ok-bg: #12351f;
-  --caution: #f0b429;
-  --caution-bg: #3b2d08;
-  --warn: #ff5d55;
-  --warn-bg: #4a1513;
-  --warn-solid: #c9302a;
-  --info: #69b3e7;
-  --info-bg: #14304a;
+  --bg: #070707;
+  --header-bg: rgba(4, 5, 6, 0.82);
 
   --valve-open: #2fb36b;
   --valve-closed: #e0453d;
   --valve-unknown: #7c8794;
 
-  --vehicle-bg: #f0b429;
-  --vehicle-fg: #1a1303;
+  /* plot / scene series: categorical, kept off the state red/orange/green. Gold is the dashed reference only. */
+  --s1: #5cb8ff;
+  --s2: #c4a1ff;
+  --s3: #4fd6c4;
+  --s4: #ff8fc7;
+  --s5: #b5d94c;
+  --s6: #d2b48c;
+  --s7: #9aa3af;
+  --s-ref: #ffd600;
+  --s-truth: #9aa3af;
+  --plot-grid: rgba(255, 255, 255, 0.08);
 
-  --focus: #9fd0ff;
-
-  /* plot / scene series: categorical, kept away from the state red/green */
-  --s1: #6cb8f0;
-  --s2: #f2a65a;
-  --s3: #b79cf2;
-  --s4: #5fd0c5;
-  --s5: #f08bb4;
-  --s6: #d8d36a;
-  --s7: #9aa7b5;
-  --s-ref: #d8d36a;
-  --s-truth: #9aa7b5;
-  --plot-grid: #222a35;
-
-  --scene-bg: #0c1016;
-  --scene-grid: #1c242e;
-  --scene-grid-strong: #33404f;
-  --scene-body: #cfd6de;
+  --scene-bg: #05090f;
+  --scene-grid: #121c2b;
+  --scene-grid-strong: #2a3a52;
+  --scene-body: #d9dde3;
+  --scene-accent: #ffd600;
+  --scene-dark: #2b3340;
+  --scene-metal: #59626e;
   --scene-plume: #ffb347;
 
-  --pipe: #4a5666;
-  --pipe-live: #b9c6d4;
+  --pipe: #5d6879;
+  --pipe-live: #c2c7cf;
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #e9edf1;
+  --bg: #f0ece2;
+  --header-bg: rgba(4, 5, 6, 0.94);
   --panel: #fbfcfd;
-  --panel-2: #f0f3f6;
-  --inset: #e3e8ed;
-  --line: #d2d9e0;
-  --line-strong: #a9b4c0;
-  --text: #17202a;
-  --text-2: #465362;
-  --text-3: #6c7886;
+  --panel-2: #f1f3f6;
+  --inset: #e9ecf0;
+  --line: rgba(17, 24, 39, 0.14);
+  --line-strong: rgba(17, 24, 39, 0.48);
+  --text: #111827;
+  --text-2: #4b5563;
+  --text-3: #636b78;
 
-  --ok: #15803d;
+  /* Gold fails contrast as text or a thin stroke on cream/white, so navy is the active colour here. */
+  --accent: #1e3a5f;
+  --accent-fg: #ffffff;
+  --accent-bg: rgba(30, 58, 95, 0.12);
+  --select: #1e3a5f;
+  --select-fg: #ffffff;
+  --select-line: #1e3a5f;
+  --focus: #1e3a5f;
+
+  --ok: #14713a;
   --ok-bg: #d9f2e1;
-  --caution: #9a6700;
-  --caution-bg: #fbecc4;
-  --warn: #c62822;
+  --caution: #a8480a;
+  --caution-bg: #ffe6cf;
+  --on-caution: #ffffff;
+  --warn: #c0221d;
   --warn-bg: #fbdcda;
-  --warn-solid: #c62822;
-  --info: #1d6fb8;
-  --info-bg: #dcebf8;
+  --warn-solid: #c0221d;
+  --info: #1d5fa8;
+  --info-bg: #dce8f6;
 
   --valve-open: #1e9a57;
   --valve-closed: #d23a32;
   --valve-unknown: #8a95a1;
 
-  --vehicle-bg: #e39b00;
-  --vehicle-fg: #1a1303;
-
-  --focus: #1d6fb8;
-
   --s1: #1d6fb8;
-  --s2: #c2600c;
-  --s3: #6d4fc4;
-  --s4: #0f8a80;
-  --s5: #c0397a;
-  --s6: #857d0c;
-  --s7: #5d6875;
-  --s-ref: #857d0c;
-  --s-truth: #5d6875;
-  --plot-grid: #e1e6eb;
+  --s2: #6d4fc4;
+  --s3: #0b7a70;
+  --s4: #c0397a;
+  --s5: #55750a;
+  --s6: #8a6234;
+  --s7: #6b7280;
+  --s-ref: #7a6200;
+  --s-truth: #6b7280;
+  --plot-grid: rgba(17, 24, 39, 0.09);
 
-  --scene-bg: #dfe5ea;
-  --scene-grid: #cbd3db;
-  --scene-grid-strong: #9aa6b3;
-  --scene-body: #f5f7f9;
+  --scene-bg: #e6e2d8;
+  --scene-grid: #d3cec2;
+  --scene-grid-strong: #a39d90;
+  --scene-body: #fbfcfd;
+  --scene-accent: #1e3a5f;
+  --scene-dark: #3a424d;
+  --scene-metal: #59626e;
   --scene-plume: #e07b00;
 
-  --pipe: #8d99a6;
-  --pipe-live: #26313d;
+  --pipe: #808894;
+  --pipe-live: #111827;
 }
