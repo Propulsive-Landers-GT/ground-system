@@ -4,15 +4,25 @@
 
 ```
  vehicle (Jetson: Lander)  ─┐
-                            ├─ UDP, gs-protocol ─►  gs-bridge  ─ WebSocket, JSON ─►  web UI (any number of browsers)
- sim (rust_rocket_sim)     ─┘   ◄─ commands ─────              ◄─ commands ──────
+ sim (rust_rocket_sim)     ─┼─ UDP, gs-protocol ─►  gs-bridge  ─ WebSocket, JSON ─►  web UI (any number of browsers)
+ test stand (gs-stand)     ─┘   ◄─ commands ─────              ◄─ commands ──────
+      │ USB serial ×2                
+      ├─ actuation Arduino: 10 valves, igniter, DAQ sync
+      ├─ load-cell Arduino: engine / nitrous / RCS HX711
+      └─ Jetson PWM: MTV throttle servos
 ```
+
+The bridge talks to up to two endpoints at once: `--vehicle` (Lander or sim) and `--stand` (gs-stand).
+`CommandKind::Stand(_)` goes to the stand; everything else goes to the vehicle. Heartbeats go to both.
+`link` status reports each separately.
 
 | Piece | Where | Role |
 |---|---|---|
 | `gs-protocol` | `crates/gs-protocol` | Wire types + postcard encoding + `VehicleLink` UDP helper. The single source of truth for the link. |
 | `gs-bridge` | `crates/gs-bridge` | Ground-side server. Owns the UDP socket, heartbeats the vehicle, fans telemetry out to browsers, forwards commands, records the session, serves the UI. Also contains `gs-mock`, a fake vehicle for UI work. |
+| `gs-stand` | `crates/gs-stand` | Test-stand adapter, runs on the Jetson. Talks to the two Arduinos over USB serial and drives the MTV servos; exposes it all over the same UDP protocol as the vehicle. Runs the timed sequences (hotfire, cold flow, RCS) from `stand/sequences/*.toml`. |
 | web UI | `web/` | Vite + React + TypeScript. Flight view, test-stand view, command panel. |
+| legacy | `jetson stuff/` | The original Arduino sketch (still the firmware `gs-stand` talks to) and the Python procedures `gs-stand` replaces. Kept as the reference for the serial protocol and pin map. |
 | vehicle side | `monoprop-flight-software`, `Lander/src/telemetry.rs` | `GroundLink`: telemetry out, commands in. The FSM has an abort path, phase overrides, live tuning and jog. |
 | sim side | `simulations`, `rust_rocket_sim --ground-station` | Real-time mode that uses the same Lander telemetry code, plus truth state and stand telemetry from the propulsion model. |
 
@@ -47,6 +57,27 @@ the same code that flies.
 The UI keeps the two visibly distinct. Loss of link triggers no automatic action yet: the vehicle
 reports `link_age_s` and the policy is left to the team.
 
+### Test-stand rules enforced by `gs-stand`
+
+The stand has its own arming, independent of the vehicle: `StandMode` is `Safe`, `Armed` or `Sequence`.
+
+| Command | Accepted when |
+|---|---|
+| `Stand(Arm)` | Safe, and both Arduino links are up |
+| `Stand(Disarm)` | Safe or Armed. Runs the safing list. |
+| `Stand(Abort)` | always. Ends any sequence, igniter off, safing list, MTV closed. |
+| `SetValve`, `Stand(SetMtvPercent)`, `Stand(SetOutput{Igniter})` | Armed |
+| `Stand(SetOutput{DaqSync})` | Safe or Armed |
+| `Stand(StartSequence)` | Armed. Mode becomes Sequence until the last step fires or Abort. |
+
+Safing list (`stand/config.toml`, default): OMV, IGV, OFILL, PUMV, PUISO, PUFILL closed; igniter off;
+MTV to 0 %; vents (OVENT, PUVENT, LFVENT) **opened**. This matches the Arduino's `reset all` and the
+team's fail-safe convention (vents normally open). The legacy `exit` path only closed OFILL and IGV.
+
+The Arduino serial protocol has no acks, so a valve's reported state is the commanded state, marked
+`Unknown` until the first command after connect. OISO (motorized, ~21 s stroke) is reported as
+`Unknown` for 21 s after each command.
+
 ### Known limits
 
 - One bridge per vehicle. The vehicle follows the last valid uplink source, so two bridges would
@@ -75,9 +106,10 @@ Bridge → browser, always `{ "type": ..., "data": ... }`:
 | `ack` | `CommandAck` |
 | `params` | `ParamsMsg` |
 | `sent` | `{ "seq": number, "kind": CommandKind }` echo of a command the bridge put on the wire, from any client |
-| `link` | `{ "vehicle_addr": string, "connected": bool, "last_rx_age_s": number \| null, "packets_rx": number, "packets_lost": number, "rate_hz": number, "recording": string \| null }` at 2 Hz |
+| `stand_status` | `StandStatus` |
+| `link` | `{ "vehicle_addr": string, "connected": bool, "last_rx_age_s": number \| null, "packets_rx": number, "packets_lost": number, "rate_hz": number, "recording": string \| null, "stand": { "addr": string, "connected": bool, "last_rx_age_s": number \| null } \| null }` at 2 Hz |
 
-On connect the bridge replays the latest `trajectory`, `params`, `link` and the last 200 `event`s.
+On connect the bridge replays the latest `trajectory`, `params`, `stand_status`, `link` and the last 200 `event`s.
 
 Browser → bridge: `{ "kind": CommandKind }`, e.g. `{"kind":"Arm"}`, `{"kind":{"SetPhase":"Descent"}}`,
 `{"kind":{"Jog":{"gimbal_theta":0.05,"gimbal_phi":0,"thrust":0,"rcs":0}}}`. The bridge assigns `seq`.

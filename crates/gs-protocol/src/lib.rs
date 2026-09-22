@@ -27,7 +27,7 @@ mod link;
 pub use link::VehicleLink;
 
 pub const MAGIC: [u8; 2] = *b"GT";
-pub const PROTOCOL_VERSION: u8 = 1;
+pub const PROTOCOL_VERSION: u8 = 2;
 const HEADER_LEN: usize = 3;
 
 /// Port the vehicle (or sim) binds for uplink commands.
@@ -63,6 +63,8 @@ pub enum Downlink {
     Ack(CommandAck),
     /// Current tunable parameters. Sent on request and after any change.
     Params(ParamsMsg),
+    /// Test-stand adapter state: arming, sequence progress, link to the Arduinos. 5 Hz.
+    StandStatus(StandStatus),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +72,8 @@ pub enum Source {
     Vehicle,
     Sim,
     Replay,
+    /// The test-stand adapter (`gs-stand`) talking to the Arduinos and MTV servos.
+    Stand,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -205,8 +209,12 @@ pub enum StandChannel {
     /// Thermocouples (°C)
     T1,
     T2,
-    /// Load cell (N)
+    /// Engine load cell (N)
     Thrust,
+    /// Nitrous tank load cell (kg)
+    NitrousMass,
+    /// RCS load cell (N)
+    RcsThrust,
 }
 
 /// Commandable valves on the P&ID.
@@ -227,6 +235,15 @@ pub enum ValveId {
     TVnt,
     Rcs1,
     Rcs2,
+}
+
+/// Non-valve discrete outputs on the test stand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StandOutput {
+    /// Igniter fire line (`kaboom` on the Arduino).
+    Igniter,
+    /// Trigger line to the external DAQ (`sync`).
+    DaqSync,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +268,43 @@ pub struct StandTelemetry {
     pub source: Source,
     pub channels: Vec<(StandChannel, f32)>,
     pub valves: Vec<ValveStatus>,
+    /// Discrete outputs that are on. Absent means off.
+    pub outputs_on: Vec<StandOutput>,
+    /// Commanded MTV opening, 0–100 %. `None` when the adapter has no MTV.
+    pub mtv_percent: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StandMode {
+    /// Outputs de-energized to their fail states; only Arm and telemetry.
+    Safe,
+    /// Individual valve / MTV / igniter commands accepted.
+    Armed,
+    /// A timed sequence is running; manual commands other than Abort are rejected.
+    Sequence,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StandStatus {
+    pub time_s: f64,
+    pub mode: StandMode,
+    /// Serial link to the actuation and load-cell Arduinos.
+    pub actuation_link_ok: bool,
+    pub loadcell_link_ok: bool,
+    /// Sequences the adapter can run, by name.
+    pub sequences: Vec<String>,
+    pub sequence: Option<SequenceProgress>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SequenceProgress {
+    pub name: String,
+    /// Seconds since the sequence's T-0.
+    pub t_s: f32,
+    pub duration_s: f32,
+    /// Index of the next step to fire and its description.
+    pub next_step: Option<(u32, String)>,
+    pub steps_total: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -342,8 +396,30 @@ pub enum CommandKind {
     /// Not acked.
     Jog(JogSetpoint),
 
-    /// Test-stand / ground checkout valve command. Only accepted in Standby.
+    /// Test-stand / ground checkout valve command. Only accepted in Standby (vehicle)
+    /// or when Armed (stand).
     SetValve { id: ValveId, open: bool },
+
+    /// Test-stand adapter commands. Rejected by the vehicle.
+    Stand(StandCommand),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum StandCommand {
+    /// Safe -> Armed. Required before any output can be driven.
+    Arm,
+    /// Any mode -> Safe, de-energizing outputs to their fail states. Does not abort a
+    /// running sequence; use `Abort` for that.
+    Disarm,
+    /// Stop everything now: end a running sequence, igniter off, run the safing list,
+    /// MTV closed. Accepted in every mode.
+    Abort,
+    /// Commanded MTV opening in percent, 0–100. Armed only.
+    SetMtvPercent(f32),
+    /// Drive a discrete output. Igniter needs Armed; DaqSync is always accepted.
+    SetOutput { id: StandOutput, on: bool },
+    /// Start a named timed sequence. Armed only.
+    StartSequence(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -358,6 +434,11 @@ impl CommandKind {
     /// High-rate commands are fire-and-forget; everything else gets a [`CommandAck`].
     pub fn wants_ack(&self) -> bool {
         !matches!(self, CommandKind::Heartbeat | CommandKind::Jog(_))
+    }
+
+    /// Commands that only the test-stand adapter can act on.
+    pub fn is_stand_only(&self) -> bool {
+        matches!(self, CommandKind::Stand(_))
     }
 }
 

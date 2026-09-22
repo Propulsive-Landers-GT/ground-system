@@ -132,6 +132,8 @@ impl Stand {
             .collect();
 
         StandTelemetry {
+            outputs_on: Vec::new(),
+            mtv_percent: None,
             time_s,
             source: Source::Sim,
             channels,

@@ -1,6 +1,6 @@
 //! JSON shapes of the WebSocket API and the session log. See `docs/DESIGN.md`.
 
-use gs_protocol::{
+use gs_protocol::{StandStatus, 
     CommandAck, CommandKind, Downlink, EventMsg, FlightTelemetry, ParamsMsg, Source,
     StandTelemetry, TrajectoryMsg,
 };
@@ -16,6 +16,7 @@ pub enum ServerMessage {
     Event(EventMsg),
     Ack(CommandAck),
     Params(ParamsMsg),
+    StandStatus(StandStatus),
     Sent(SentCommand),
     Link(LinkStatus),
     Error { message: String },
@@ -52,6 +53,7 @@ impl From<Downlink> for ServerMessage {
             Downlink::Event(m) => Self::Event(m),
             Downlink::Ack(m) => Self::Ack(m),
             Downlink::Params(m) => Self::Params(m),
+            Downlink::StandStatus(m) => Self::StandStatus(m),
         }
     }
 }

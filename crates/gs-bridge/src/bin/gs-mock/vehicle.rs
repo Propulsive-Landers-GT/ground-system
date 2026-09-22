@@ -163,6 +163,7 @@ impl Vehicle {
                 }
                 self.jog = Some((clamp_jog(setpoint), self.time_s));
             }
+            CommandKind::Stand(_) => return Err("stand commands are for the test-stand adapter, not the vehicle".into()),
             CommandKind::SetValve { id, open } => {
                 self.require_phase(&[Standby], "SetValve")?;
                 self.stand.set_valve(*id, *open);
