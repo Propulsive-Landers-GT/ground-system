@@ -57,7 +57,7 @@ export function Plot({ title, unit, series, getData, span = 60, syncKey, yRange,
     if (!el) return;
     const grid = cssVar("--plot-grid");
     const axis = cssVar("--text-3");
-    const font = `10px ${cssVar("--font-num")}`;
+    const font = `500 11px ${cssVar("--font-num")}`;
     const markColor = cssVar("--text-3");
 
     const opts: uPlot.Options = {
@@ -95,14 +95,14 @@ export function Plot({ title, unit, series, getData, span = 60, syncKey, yRange,
       },
       axes: [
         {
-          stroke: axis, font, size: 18, gap: 2,
+          stroke: axis, font, size: 22, gap: 4,
           grid: { stroke: grid, width: 1 }, ticks: { show: false },
           values: (_u, vals) => vals.map((v) => `${Math.round(v)}`),
-          space: 50,
+          space: 60,
         },
         {
-          stroke: axis, font, size: 38, gap: 3,
-          grid: { stroke: grid, width: 1 }, ticks: { show: false }, space: 22,
+          stroke: axis, font, size: 44, gap: 5,
+          grid: { stroke: grid, width: 1 }, ticks: { show: false }, space: 28,
           values: (_u, vals) => vals.map((v) => (Math.abs(v) >= 1000 ? String(Math.round(v)) : String(+v.toFixed(2)))),
         },
       ],
@@ -111,7 +111,7 @@ export function Plot({ title, unit, series, getData, span = 60, syncKey, yRange,
         ...series.map((s) => ({
           label: s.label,
           stroke: cssVar(s.color),
-          width: s.width ?? 1.4,
+          width: s.width ?? 1.8,
           dash: s.dash,
           spanGaps: false,
           points: { show: false },

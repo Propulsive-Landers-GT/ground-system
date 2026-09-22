@@ -20,14 +20,26 @@ const log = () => page.locator(".commands .cmd-row").allInnerTexts();
 const phase = () => page.locator('.step[aria-current="step"] .step-name').textContent();
 const btn = (name) => page.getByRole("button", { name, exact: true });
 const hold = async (loc, ms = 1250) => {
+  await loc.scrollIntoViewIfNeeded();
   const b = await loc.boundingBox();
   await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.down(); await page.waitForTimeout(ms); await page.mouse.up();
 };
 const standMode = () => page.locator(".standstrip .stand-mode").getAttribute("data-mode");
 const valveRow = (name) => page.locator(".valvetable tbody tr", { hasText: name });
 const noScroll = async (name) => {
+  // The main pane scrolls; the document itself must not (the strip and the command rail stay put).
   const s = await page.evaluate(() => ({ sw: document.documentElement.scrollWidth, sh: document.documentElement.scrollHeight }));
   check(`no page scroll: ${name}`, s.sw <= 1280 && s.sh <= 800, JSON.stringify(s));
+};
+// Secondary detail lives in disclosures (Valves, Actuation, Sensors, State estimate). Open one before using it.
+const disclosure = (id) => page.locator(`[data-disclosure="${id}"]`);
+const openDisclosure = async (id) => {
+  const d = disclosure(id);
+  if ((await d.getAttribute("data-open")) !== "true") {
+    await d.locator(".disclosure-btn").click();
+    await page.waitForTimeout(350);
+  }
+  check(`disclosure ${id} open`, (await d.locator(".disclosure-btn").getAttribute("aria-expanded")) === "true");
 };
 
 await page.goto(url);
@@ -64,6 +76,11 @@ await page.keyboard.press("2");
 await page.waitForTimeout(800);
 const standConfigured = (await page.locator(".standstrip .stand-unconfigured").count()) === 0;
 console.log(`INFO  test stand ${standConfigured ? "configured" : "not configured (vehicle valve rule)"}`);
+// Closed disclosure: its controls are inert (not clickable, not focusable) and the summary still shows the counts.
+check("valve summary visible while closed", /open/.test(await disclosure("stand.valves").locator(".disclosure-summary").innerText()));
+check("closed disclosure body is inert", (await disclosure("stand.valves").locator(".disclosure-body").getAttribute("inert")) !== null);
+await openDisclosure("stand.valves");
+check("open disclosure body is not inert", (await disclosure("stand.valves").locator(".disclosure-body").getAttribute("inert")) === null);
 
 if (!standConfigured) {
   // Vehicle checkout rule: valves in Standby.
@@ -89,7 +106,11 @@ if (!standConfigured) {
   check("STAND badge in header", await page.locator('.source[data-source="Stand"]').isVisible());
   check("valve controls locked while Safe", (await valveRow("OMV").getByRole("button", { name: "Open" }).getAttribute("aria-disabled")) === "true");
   check("valve lock has a reason", ((await valveRow("OMV").getByRole("button", { name: "Open" }).getAttribute("title")) ?? "").length > 0);
+  check("valve lock reason shown inline", /arm the stand/i.test(await page.locator(".valves-body .why").innerText()), await page.locator(".valves-body .why").innerText());
+  check("outputs lock reason shown inline", /arm the stand/i.test(await page.locator(".outputs .why").innerText()));
   check("start sequence locked while Safe", (await page.locator(".start-seq").getAttribute("aria-disabled")) === "true");
+  check("start sequence reason shown inline", (await page.locator(".standcmd .seq-block .why").count()) === 1);
+  check("stand strip explains the mode", /safed/i.test(await page.locator(".standstrip .phase-meaning").innerText()));
   check("stand abort enabled while Safe", (await page.locator(".abort-stand").getAttribute("aria-disabled")) !== "true");
 
   if (devHook) {
@@ -105,10 +126,12 @@ if (!standConfigured) {
   check("stand Arm accepted", (await log())[0].includes("Stand arm") && (await log())[0].includes("accepted"), JSON.stringify((await log())[0]));
   check("mode badge ARMED", (await standMode()) === "Armed");
   check("valve controls enabled when Armed", (await valveRow("OMV").getByRole("button", { name: "Open" }).getAttribute("aria-disabled")) !== "true");
+  check("valve lock reason gone when Armed", (await page.locator(".valves-body .why").count()) === 0);
 
   await valveRow("OMV").getByRole("button", { name: "Open" }).click();
   await page.waitForTimeout(600);
   check("OMV opens when Armed", (await valveRow("OMV").locator(".chip").innerText()).includes("open"));
+  check("valve summary counts the open valve", /[1-9]\d* open/.test(await disclosure("stand.valves").locator(".disclosure-summary").innerText()));
   await valveRow("OMV").getByRole("button", { name: "Close" }).click();
   await page.waitForTimeout(400);
 
@@ -128,6 +151,22 @@ if (!standConfigured) {
   await page.waitForTimeout(600);
   await noScroll("stand armed");
   await page.screenshot({ path: `${out}/stand-armed.png` });
+
+  // Plot chooser: every plot is reachable; toggling a chip adds / removes it and the last one cannot be hidden.
+  {
+    const chips = page.locator(".standview .chips .chip-btn");
+    const before = await page.locator(".standview .plot").count();
+    const temps = chips.filter({ hasText: "Temperatures" });
+    if ((await temps.getAttribute("aria-pressed")) === "true") { await temps.click(); await page.waitForTimeout(200); }
+    const base = await page.locator(".standview .plot").count();
+    await temps.click();
+    await page.waitForTimeout(300);
+    check("plot chooser shows a hidden plot", (await page.locator(".standview .plot").count()) === base + 1 && (await page.locator(".standview .plot-title", { hasText: "Temperatures" }).count()) === 1, `${before}->${base}->${await page.locator(".standview .plot").count()}`);
+    await temps.click();
+    await page.waitForTimeout(300);
+    check("plot chooser hides it again", (await page.locator(".standview .plot").count()) === base);
+    check("every stand plot has a chip", (await chips.count()) === 5);
+  }
 
   // Igniter: a short press must not fire, a full hold must.
   const fire = page.locator(".fire");
@@ -188,6 +227,13 @@ check("recording stops", await page.locator(".rec-btn").isVisible());
 
 // ---------------------------------------------------------------- flight (unchanged)
 await page.keyboard.press("1");
+await page.waitForTimeout(400);
+// Open the detail disclosures first: the Jog drawer covers the leading edge of the main pane.
+await openDisclosure("flight.actuation");
+await openDisclosure("flight.sensors");
+check("sensor lights reachable", (await page.locator(".sensors .oklight").count()) === 3);
+await openDisclosure("flight.state");
+check("state estimate reachable", (await page.locator('[data-disclosure="flight.state"] .vec tbody tr').count()) >= 3);
 await btn("Jog").first().click();
 await page.locator(".jog .seg-btn", { hasText: "Jog" }).click();
 await page.waitForTimeout(500);
@@ -195,7 +241,9 @@ check("jog mode active", (await page.locator(".phasebar .mode").innerText()) ===
 await page.locator('.jog input[type="range"]').first().fill("9");
 await page.waitForTimeout(700);
 check("gimbal follows jog", (await page.locator(".actuation .mini dd").first().innerText()).includes("+9.0"), await page.locator(".actuation .mini dd").first().innerText());
+check("actuation summary follows jog", /\+9\.0/.test(await disclosure("flight.actuation").locator(".disclosure-summary").innerText()));
 check("arm blocked while jogging", (await btn("Arm").getAttribute("aria-disabled")) === "true");
+check("arm block reason shown inline", /jog/i.test(await page.locator(".commandpanel .why").first().innerText()), await page.locator(".commandpanel .why").first().innerText());
 await page.screenshot({ path: `${out}/flight-jog-active.png` });
 await page.locator(".jog .seg-btn", { hasText: "Auto" }).click();
 await page.waitForTimeout(400);
@@ -206,6 +254,16 @@ await btn("Arm").click();
 await page.waitForTimeout(500);
 check("armed", (await phase()) === "Armed");
 check("armed without recording shows NOT RECORDING", (await page.locator(".recording[data-armed]").count()) === 1);
+check("phase strip explains Armed", /launch/i.test(await page.locator(".phasebar .phase-meaning").innerText()));
+check("launch reason gone when Armed", (await page.locator(".commandpanel .cmd-group").first().locator(".why").count()) === 0);
+// Link details (address, rate, lost, last rx) live in the popover behind the single link indicator.
+await page.locator(".linkbtn").click();
+await page.waitForTimeout(400);
+const pop = await page.locator(".link-pop").innerText();
+check("link popover shows rate / lost / last packet", /Telemetry rate/.test(pop) && /Packets lost/.test(pop) && /Last packet/.test(pop) && /Vehicle/.test(pop), pop.replace(/\s+/g, " "));
+await page.keyboard.press("Escape");
+await page.waitForTimeout(150);
+check("link popover closes on Escape", (await page.locator(".linkbtn").getAttribute("aria-expanded")) === "false");
 const launch = page.locator(".launch");
 await hold(launch, 300);
 await page.waitForTimeout(300);

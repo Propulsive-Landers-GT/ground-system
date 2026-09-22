@@ -32,8 +32,8 @@ export function StatusBar() {
             title={`Shortcut: ${t.key}`}
             onClick={() => useUi.setState({ view: t.id })}
           >
-            <kbd>{t.key}</kbd>
             {t.label}
+            <kbd>{t.key}</kbd>
           </button>
         ))}
       </nav>
@@ -52,56 +52,79 @@ export function StatusBar() {
   );
 }
 
+/**
+ * One indicator for the whole link. The word is always visible; address, rate, lost packets and packet
+ * age live in a popover that opens on hover or focus and pins on click.
+ */
 function LinkBlock() {
   const ws = useUi((s) => s.ws);
   const retry = useUi((s) => s.wsRetryInS);
   const link = useUi((s) => s.link);
   const stale = useUi((s) => s.stale);
   const hasFlight = useUi((s) => s.hasFlight);
+  const [pinned, setPinned] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!pinned) return;
+    const onDown = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setPinned(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPinned(false); };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("pointerdown", onDown); window.removeEventListener("keydown", onKey); };
+  }, [pinned]);
 
   let state: "up" | "stale" | "down" = "down";
-  let word = "DOWN";
+  let word = "Link down";
   if (ws !== "open") {
-    word = ws === "connecting" ? "CONNECTING" : "NO BRIDGE";
+    word = ws === "connecting" ? "Connecting" : "No bridge";
   } else if (link?.connected && hasFlight && !stale) {
     state = "up";
-    word = "LINK UP";
+    word = "Link up";
   } else if (link?.connected || (hasFlight && stale && link?.connected !== false)) {
     state = "stale";
-    word = "STALE";
-  } else {
-    word = "LINK DOWN";
+    word = "Stale";
   }
 
+  const lost = link ? link.packets_lost : 0;
+
   return (
-    <div className="linkblock" data-state={state} role="status" aria-label={`Vehicle link ${word}`}>
-      <span className="link-state">
+    <div className="linkblock" data-state={state} data-open={pinned || undefined} ref={root}>
+      <button
+        type="button"
+        className="linkbtn"
+        aria-expanded={pinned}
+        aria-controls="link-details"
+        onClick={() => setPinned((p) => !p)}
+        title="Link details"
+      >
         <span className="dot" aria-hidden="true" />
-        {word}
-      </span>
-      {ws !== "open" ? (
-        <span className="kv">
-          <span className="k">bridge</span>
-          <span className="v">{ws === "connecting" ? "connecting" : `retry in ${retry ?? 0} s`}</span>
-        </span>
-      ) : (
-        <>
-          <span className="kv kv-addr" title="Vehicle address">
-            <span className="k">vehicle</span>
-            <span className="v">{link?.vehicle_addr ?? "—"}</span>
-          </span>
-          <span className="kv kv-rate" title="Flight telemetry rate">
-            <span className="k">rate</span>
-            <span className="v w4">{num(link?.rate_hz, 0)}</span>
-            <span className="u">Hz</span>
-          </span>
-          <span className="kv" data-flag={link && link.packets_lost > 0 ? "caution" : undefined}>
-            <span className="k">lost</span>
-            <span className="v w4">{link ? link.packets_lost : "—"}</span>
-          </span>
-          <RxAge />
-        </>
-      )}
+        <span className="link-state" role="status" aria-label={`Vehicle link: ${word}`}>{word}</span>
+        {lost > 0 && <span className="link-lost" title={`${lost} packets lost`}>{lost} lost</span>}
+        <span className="chev" aria-hidden="true" />
+      </button>
+      <div className="link-pop" id="link-details" role="group" aria-label="Link details">
+        <dl className="kvlist">
+          <dt>Bridge</dt>
+          <dd>{ws === "open" ? "connected" : ws === "connecting" ? "connecting…" : `retry in ${retry ?? 0} s`}</dd>
+          <dt>Vehicle</dt>
+          <dd>{link?.vehicle_addr ?? "—"}</dd>
+          <dt>Telemetry rate</dt>
+          <dd className="val">{num(link?.rate_hz, 0)}<span className="unit">Hz</span></dd>
+          <dt>Packets lost</dt>
+          <dd className="val" data-flag={lost > 0 ? "caution" : undefined}>{link ? lost : "—"}</dd>
+          <dt>Last packet</dt>
+          <dd><RxAge /></dd>
+          {link?.stand && (
+            <>
+              <dt>Test stand</dt>
+              <dd>{link.stand.addr} · {link.stand.connected ? "connected" : "down"}</dd>
+            </>
+          )}
+          <dt>Recording</dt>
+          <dd className="link-pop-rec">{link?.recording ?? "off"}</dd>
+        </dl>
+      </div>
     </div>
   );
 }
@@ -113,10 +136,8 @@ function RxAge() {
   // Prefer our own measurement (time since the last flight packet reached this browser).
   const age = hasFlight ? (performance.now() - tele.flightRxMs) / 1000 : link?.last_rx_age_s ?? null;
   return (
-    <span className="kv kv-rx" data-flag={age !== null && age > 1 ? "warn" : undefined} title="Time since the last flight packet">
-      <span className="k">last rx</span>
-      <span className="v w5">{age === null ? "—" : age > 99 ? ">99" : num(age, age < 10 ? 2 : 0)}</span>
-      <span className="u">s</span>
+    <span className="val" data-flag={age !== null && age > 1 ? "warn" : undefined}>
+      {age === null ? "—" : age > 99 ? ">99" : num(age, age < 10 ? 2 : 0)}<span className="unit">s ago</span>
     </span>
   );
 }
@@ -128,7 +149,7 @@ function SourceBadge() {
   const hasStand = useUi((s) => s.hasStand);
   const standStale = useUi((s) => s.standStale);
   const stand = hasStand && standSource === "Stand";
-  if (!source && !stand) return <span className="source" data-source="none">NO DATA</span>;
+  if (!source && !stand) return <span className="source" data-source="none">No data</span>;
   return (
     <span className="sources">
       {source && (
@@ -143,7 +164,7 @@ function SourceBadge() {
                 : "Replaying a recorded session. Commands are disabled."
           }
         >
-          {source === "Vehicle" ? "VEHICLE" : source === "Sim" ? "SIM" : "REPLAY"}
+          {source === "Vehicle" ? "Vehicle" : source === "Sim" ? "Sim" : "Replay"}
           {source === "Vehicle" && <small>live hardware</small>}
         </span>
       )}
@@ -154,7 +175,7 @@ function SourceBadge() {
           data-stale={standStale || undefined}
           title={standStale ? "Test-stand telemetry has stopped" : "Test-stand telemetry is flowing from gs-stand. Stand commands act on hardware."}
         >
-          STAND
+          Stand
           <small>{standStale ? "stale" : "live hardware"}</small>
         </span>
       )}
@@ -241,7 +262,7 @@ function Recording() {
         </form>
       ) : (
         <>
-          <span className="rec-hint">{armed ? "NOT RECORDING" : "not recording"}</span>
+          <span className="rec-hint">Not recording</span>
           <button
             className="btn btn-quiet rec-btn"
             aria-disabled={ws !== "open" || undefined}

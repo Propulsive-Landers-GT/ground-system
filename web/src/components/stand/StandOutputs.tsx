@@ -7,6 +7,7 @@ import { tele } from "../../store/telemetry";
 import { sendCommand } from "../../ws";
 import { standGates, type Gate } from "../../lib/interlocks";
 import { HoldButton } from "../shell/HoldButton";
+import { Reason } from "../shell/Reason";
 import { useStandCtx } from "./useStandCtx";
 import { CHANNEL_LABEL, CHANNEL_UNIT, outputOn, type StandChannel } from "../../protocol";
 import { num } from "../../lib/format";
@@ -17,12 +18,37 @@ const LOAD_CELLS: StandChannel[] = ["Thrust", "NitrousMass", "RcsThrust"];
 const dis = (g: Gate) => ({ "aria-disabled": !g.ok || undefined, "data-disabled": !g.ok || undefined, title: g.ok ? undefined : g.why });
 const clampPct = (v: number) => Math.max(0, Math.min(100, Math.round(v)));
 
-/** Short lock reason for the panel title; the buttons carry the full sentence. */
+/** Short lock reason for the panel title; the controls carry the full sentence inline and in their tooltip. */
 function lockNote(g: Gate, mode: string | null): string {
-  if (g.ok) return "commands enabled";
+  if (g.ok) return "unlocked";
   if (mode === "Sequence") return "locked: sequence running";
-  if (mode === "Safe") return "locked: stand is SAFE";
+  if (mode === "Safe") return "locked while Safe";
   return "locked";
+}
+
+/** The three load cells, large: thrust is what a hotfire is for. */
+export function LoadCells() {
+  useTick();
+  return (
+    <section className="panel loadcells" aria-label="Load cells">
+      <h2 className="panel-title">Load cells</h2>
+      <div className="lc-grid" role="group" aria-label="Load cells">
+        {LOAD_CELLS.map((ch) => {
+          const v = tele.channels.get(ch);
+          const unit = CHANNEL_UNIT[ch];
+          return (
+            <div key={ch} className="lc" data-missing={v === undefined || undefined}>
+              <span className="readout-label">{CHANNEL_LABEL[ch]}</span>
+              <span className="lc-value">
+                <span className="val" data-live>{num(v, unit === "kg" ? 2 : 0)}</span>
+                <span className="unit">{unit}</span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 export function StandOutputs() {
@@ -41,6 +67,7 @@ export function StandOutputs() {
         <span className="title-note" title={out.ok ? undefined : out.why}>{lockNote(out, ctx.mode)}</span>
       </h2>
       <div className="outputs-body">
+        <Reason gate={out} />
         <MtvControl gate={out} telemetry={m?.mtv_percent ?? null} />
 
         <div className="out-row" data-on={igniterOn || undefined}>
@@ -76,24 +103,8 @@ export function StandOutputs() {
               aria-label="DAQ sync"
               onChange={(e) => sendCommand({ Stand: { SetOutput: { id: "DaqSync", on: e.target.checked } } })}
             />
-            <span>{daqOn ? "sync high" : "sync low"}</span>
+            <span>{daqOn ? "sync line high" : "sync line low"}</span>
           </label>
-        </div>
-
-        <div className="lc-grid" role="group" aria-label="Load cells">
-          {LOAD_CELLS.map((ch) => {
-            const v = tele.channels.get(ch);
-            const unit = CHANNEL_UNIT[ch];
-            return (
-              <div key={ch} className="lc" data-missing={v === undefined || undefined}>
-                <span className="readout-label">{CHANNEL_LABEL[ch]}</span>
-                <span className="lc-value">
-                  <span className="val" data-live>{num(v, unit === "kg" ? 2 : 0)}</span>
-                  <span className="unit">{unit}</span>
-                </span>
-              </div>
-            );
-          })}
         </div>
       </div>
     </section>

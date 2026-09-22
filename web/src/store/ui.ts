@@ -57,11 +57,70 @@ interface UiState {
   view: View;
   theme: Theme;
   drawer: Drawer;
+  /** Which disclosure sections are open, by id. Persisted so the layout an operator set up survives a reload. */
+  open: Record<string, boolean>;
+  /** Which plots are shown per view, by plot id. Persisted. */
+  plots: Record<View, string[]>;
   tick: number;
 }
 
 const initialTheme = (): Theme =>
   typeof document !== "undefined" && document.documentElement.dataset.theme === "light" ? "light" : "dark";
+
+const PREFS_KEY = "gs-prefs";
+export const DEFAULT_PLOTS: Record<View, string[]> = {
+  flight: ["altitude", "thrust"],
+  stand: ["feed", "engine", "loadcells"],
+};
+
+function loadPrefs(): { open: Record<string, boolean>; plots: Record<View, string[]> } {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (raw) {
+      const p = JSON.parse(raw) as Partial<{ open: Record<string, boolean>; plots: Partial<Record<View, string[]>> }>;
+      return {
+        open: p.open && typeof p.open === "object" ? p.open : {},
+        plots: {
+          flight: Array.isArray(p.plots?.flight) ? p.plots.flight : DEFAULT_PLOTS.flight,
+          stand: Array.isArray(p.plots?.stand) ? p.plots.stand : DEFAULT_PLOTS.stand,
+        },
+      };
+    }
+  } catch {
+    /* private mode or bad JSON */
+  }
+  return { open: {}, plots: DEFAULT_PLOTS };
+}
+
+function savePrefs() {
+  const s = useUi.getState();
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ open: s.open, plots: s.plots }));
+  } catch {
+    /* private mode */
+  }
+}
+
+/** Open or close a disclosure section. `fallback` is what an id with no saved preference reads as. */
+export function isOpen(id: string, fallback: boolean): boolean {
+  const v = useUi.getState().open[id];
+  return v === undefined ? fallback : v;
+}
+export function setOpen(id: string, open: boolean) {
+  useUi.setState((s) => ({ open: { ...s.open, [id]: open } }));
+  savePrefs();
+}
+export function togglePlot(view: View, id: string) {
+  useUi.setState((s) => {
+    const cur = s.plots[view];
+    const next = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+    // Never hide the last plot: an empty strip reads as broken.
+    return next.length ? { plots: { ...s.plots, [view]: next } } : {};
+  });
+  savePrefs();
+}
+
+const prefs = loadPrefs();
 
 export const useUi = create<UiState>(() => ({
   ws: "connecting",
@@ -87,6 +146,8 @@ export const useUi = create<UiState>(() => ({
   view: "flight",
   theme: initialTheme(),
   drawer: null,
+  open: prefs.open,
+  plots: prefs.plots,
   tick: 0,
 }));
 

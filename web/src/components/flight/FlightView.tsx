@@ -1,41 +1,41 @@
-import { useEffect } from "react";
-import { useUi } from "../../store/ui";
-import { Instruments } from "./Instruments";
+import { useTick } from "../../store/ui";
+import { FlightHero, Margins, StateEstimate, stateSummary } from "./Instruments";
 import { Scene3D } from "./Scene3D";
-import { Actuation } from "./Actuation";
-import { SensorHealth } from "./SensorHealth";
+import { Actuation, ActuationSummary } from "./Actuation";
+import { SensorHealth, SensorSummary } from "./SensorHealth";
 import { FlightPlots } from "./FlightPlots";
-import { TuningDrawer } from "./TuningDrawer";
-import { JogPanel } from "./JogPanel";
+import { Disclosure } from "../shell/Disclosure";
 
+/**
+ * Flight tab. Primary: the hero readouts, the 3D scene and the margins beside it. Secondary detail
+ * (actuation, sensors, raw state) sits in disclosures that show their one-line summary while closed,
+ * and the plot strip ends the page. The pane scrolls; the rail and the state strip do not.
+ */
 export function FlightView() {
-  const drawer = useUi((s) => s.drawer);
-
-  useEffect(() => {
-    if (!drawer) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") useUi.setState({ drawer: null }); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [drawer]);
-
   return (
     <div className="flightview">
-      <Instruments />
-      <Scene3D />
-      <div className="sidecol">
-        <Actuation />
-        <SensorHealth />
+      <FlightHero />
+      <div className="primary-row">
+        <Scene3D />
+        <Margins />
+      </div>
+      <div className="details-row">
+        <Disclosure id="flight.actuation" title="Actuation" summary={<ActuationSummary />}>
+          <Actuation />
+        </Disclosure>
+        <Disclosure id="flight.sensors" title="Sensors" summary={<SensorSummary />}>
+          <SensorHealth />
+        </Disclosure>
+        <Disclosure id="flight.state" title="State estimate" summary={<StateSummary />}>
+          <StateEstimate />
+        </Disclosure>
       </div>
       <FlightPlots />
-      {drawer && (
-        <aside className="drawer" aria-label={drawer === "tuning" ? "Tuning" : "Jog"}>
-          <header className="drawer-head">
-            <h2>{drawer === "tuning" ? "Tuning" : "Actuator jog"}</h2>
-            <button className="btn btn-quiet" onClick={() => useUi.setState({ drawer: null })}>Close</button>
-          </header>
-          {drawer === "tuning" ? <TuningDrawer /> : <JogPanel />}
-        </aside>
-      )}
     </div>
   );
+}
+
+function StateSummary() {
+  useTick();
+  return <span className="summary-line" data-live>{stateSummary()}</span>;
 }

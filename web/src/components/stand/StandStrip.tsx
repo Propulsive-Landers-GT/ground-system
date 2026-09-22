@@ -1,9 +1,10 @@
-// Top strip of the Test Stand view: stand mode, Arduino link lamps, UDP link to gs-stand, and the
-// running sequence's T+ clock as a progress bar.
+// State strip of the Test Stand tab: stand mode, Arduino link lamps, UDP link to gs-stand, the running
+// sequence's T+ clock and progress, and one sentence about what the mode means.
 
 import { useTick, useUi } from "../../store/ui";
 import { tele } from "../../store/telemetry";
 import { num, shortClock, tplus } from "../../lib/format";
+import { standMeaning } from "../../lib/phases";
 import type { SequenceProgress as SequenceProgressMsg } from "../../protocol";
 
 const MODE_WORD = { Safe: "SAFE", Armed: "ARMED", Sequence: "SEQUENCE" } as const;
@@ -12,28 +13,40 @@ export function StandStrip() {
   const standLink = useUi((s) => s.link?.stand ?? null);
   const ws = useUi((s) => s.ws);
   const status = useUi((s) => s.standStatus);
+  const phase = useUi((s) => s.phase);
+  const hasFlight = useUi((s) => s.hasFlight);
   const configured = standLink !== null;
   const mode = status?.mode ?? null;
 
   return (
-    <div className="standstrip" data-mode={mode ?? "none"} role="group" aria-label="Test stand status">
-      <span className="stand-mode" data-mode={mode ?? "none"} title="Stand arming mode reported by gs-stand">
-        {mode ? MODE_WORD[mode] : "—"}
-      </span>
-      {!configured ? (
-        <span className="stand-unconfigured">
-          {ws === "open" ? "no test stand configured on the bridge" : "no bridge"}
+    <div className="standstrip strip" data-mode={mode ?? "none"} role="group" aria-label="Test stand state">
+      <div className="strip-row">
+        <span className="stand-mode" data-mode={mode ?? "none"} title="Stand arming mode reported by gs-stand">
+          {mode ? MODE_WORD[mode] : "—"}
         </span>
-      ) : (
-        <>
-          <span className="stand-lamps" role="group" aria-label="Arduino links">
-            <Lamp label="actuation" ok={status?.actuation_link_ok ?? null} title="Serial link to the actuation Arduino (valves, igniter, DAQ sync)" />
-            <Lamp label="load cells" ok={status?.loadcell_link_ok ?? null} title="Serial link to the load-cell Arduino" />
+        {!configured ? (
+          <span className="stand-unconfigured">
+            {ws === "open" ? "No test stand on this bridge" : "No bridge"}
           </span>
-          <StandLink />
-        </>
-      )}
-      <SequenceProgress />
+        ) : (
+          <>
+            <span className="stand-lamps" role="group" aria-label="Arduino links">
+              <Lamp label="actuation" ok={status?.actuation_link_ok ?? null} title="Serial link to the actuation Arduino (valves, igniter, DAQ sync)" />
+              <Lamp label="load cells" ok={status?.loadcell_link_ok ?? null} title="Serial link to the load-cell Arduino" />
+            </span>
+            <StandLink />
+          </>
+        )}
+        <SequenceProgress />
+      </div>
+      <div className="strip-row strip-sub">
+        <p className="phase-meaning" aria-live="polite">{standMeaning(mode, configured)}</p>
+        {hasFlight && (
+          <span className="xref" title="Vehicle phase (see the Flight tab)">
+            Vehicle <b>{phase ?? "—"}</b>
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -68,17 +81,17 @@ function StandLink() {
       aria-label={`Stand link ${up ? "up" : "down"}`}
     >
       <span className="dot" aria-hidden="true" />
-      <span className="k">stand</span>
+      <span className="k">stand link</span>
       <span className="v w5" data-flag={age !== null && age > 1 ? "warn" : undefined}>
         {age === null ? "—" : age > 99 ? ">99" : num(age, age < 10 ? 2 : 0)}
       </span>
-      <span className="u">s</span>
+      <span className="u">s ago</span>
       <span className="v addr">{standLink.addr}</span>
     </span>
   );
 }
 
-/** Compact progress for the strip: name, T+ clock, bar, next step, fired count. */
+/** Progress for the strip: name, T+ clock, bar, next step, fired count. */
 function SequenceProgress() {
   const status = useUi((s) => s.standStatus);
   const seq = status?.sequence ?? null;
