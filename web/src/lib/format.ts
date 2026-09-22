@@ -33,6 +33,23 @@ export function shortClock(t: number | null | undefined): string {
   return `${String(m).padStart(2, "0")}:${s.toFixed(1).padStart(4, "0")}`;
 }
 
+/** Sequence clock: T+48.7 for short sequences, T+MM:SS.s past ten minutes. */
+export function tplus(t: number | null | undefined): string {
+  if (t === null || t === undefined || !Number.isFinite(t)) return "T+" + DASH;
+  if (Math.abs(t) >= 600) return clock(t);
+  return `T${t < 0 ? "−" : "+"}${Math.abs(t).toFixed(1)}`;
+}
+
+/** Elapsed wall time as M:SS or H:MM:SS. */
+export function elapsed(s: number | null | undefined): string {
+  if (s === null || s === undefined || !Number.isFinite(s)) return DASH;
+  const total = Math.max(0, Math.floor(s));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  return (h ? `${h}:${String(m).padStart(2, "0")}` : String(m)) + ":" + String(sec).padStart(2, "0");
+}
+
 export function duration(t: number | null | undefined): string {
   if (t === null || t === undefined || !Number.isFinite(t)) return DASH;
   if (t < 60) return `${t.toFixed(1)} s`;

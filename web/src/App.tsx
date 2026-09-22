@@ -8,11 +8,13 @@ import { CommandLog } from "./components/shell/CommandLog";
 import { EventLog } from "./components/shell/EventLog";
 import { FlightView } from "./components/flight/FlightView";
 import { StandView } from "./components/stand/StandView";
+import { StandCommandPanel } from "./components/stand/StandCommandPanel";
 
 export function App() {
   const view = useUi((s) => s.view);
   const stale = useUi((s) => s.stale);
   const hasFlight = useUi((s) => s.hasFlight);
+  const hasStand = useUi((s) => s.hasStand);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -27,7 +29,7 @@ export function App() {
   }, []);
 
   return (
-    <div className="app" data-stale={stale || undefined} data-waiting={!hasFlight || undefined}>
+    <div className="app" data-stale={stale || undefined} data-waiting={(!hasFlight && !hasStand) || undefined}>
       <StatusBar />
       <PhaseBar />
       <TerminationBanner />
@@ -35,7 +37,8 @@ export function App() {
         {view === "flight" ? <FlightView /> : <StandView />}
       </main>
       <aside className="rail" aria-label="Commands and logs">
-        <CommandPanel />
+        {/* Each tab carries its own ABORT so the two systems are never one click apart. */}
+        {view === "flight" ? <CommandPanel /> : <StandCommandPanel />}
         <CommandLog />
         <EventLog />
       </aside>

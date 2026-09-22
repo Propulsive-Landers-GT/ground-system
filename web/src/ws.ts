@@ -1,8 +1,8 @@
 // WebSocket client for the gs-bridge API (docs/DESIGN.md). Same host, /ws; the Vite dev
 // server proxies /ws to the bridge. Reconnects with exponential backoff.
 
-import type { ClientMsg, CommandKind, ServerMsg } from "./protocol";
-import { describeCommand, isJog } from "./protocol";
+import type { ClientMsg, CommandKind, ControlMsg, ServerMsg } from "./protocol";
+import { describeCommand, isJog, isStandCommand } from "./protocol";
 import { ingestFlight, ingestStand, ingestTrajectory, tele } from "./store/telemetry";
 import { MAX_COMMANDS, MAX_EVENTS, useUi, type CommandEntry, type EventEntry } from "./store/ui";
 
@@ -98,17 +98,39 @@ function handle(msg: ServerMsg) {
       break;
     }
     case "stand": {
-      ingestStand(msg.data);
+      const m = msg.data;
+      if (!ingestStand(m)) break;
       const s = useUi.getState();
-      if (s.source === null) useUi.setState({ source: msg.data.source });
+      if (!s.hasStand || s.standStale || s.standSource !== m.source) {
+        useUi.setState({ hasStand: true, standStale: false, standSource: m.source });
+      }
+      // A vehicle or sim reporting its own propulsion state also tells us who we are talking to.
+      if (s.source === null && m.source !== "Stand") useUi.setState({ source: m.source });
       break;
     }
+    case "stand_status":
+      useUi.setState({ standStatus: msg.data });
+      break;
     case "trajectory":
       ingestTrajectory(msg.data);
       break;
-    case "link":
-      useUi.setState({ link: msg.data });
+    case "link": {
+      const rec = msg.data.recording ?? null;
+      const s = useUi.getState();
+      // Note when a recording appeared so the header can show elapsed time. If the bridge was already
+      // recording when we connected, the elapsed time counts from then and says so.
+      useUi.setState(
+        rec !== (s.link?.recording ?? null)
+          ? { link: msg.data, recordingSinceMs: rec ? performance.now() : null, recordingError: rec ? "" : s.recordingError }
+          : { link: msg.data },
+      );
       break;
+    }
+    case "error": {
+      const text = typeof msg.data === "string" ? msg.data : msg.data?.message ?? "unknown error";
+      useUi.setState({ recordingError: text, lastRejection: `Bridge: ${text}` });
+      break;
+    }
     case "params":
       useUi.setState((s) => ({ params: msg.data, paramsRev: s.paramsRev + 1 }));
       break;
@@ -170,7 +192,7 @@ function armAckTimeout(key: number) {
         status: "noack",
         reason: c.status === "sending" ? "bridge did not confirm it was sent" : undefined,
       }),
-      (c) => useUi.setState({ lastRejection: `${c.label}: no ack from vehicle` }),
+      (c) => useUi.setState({ lastRejection: `${c.label}: no ack from ${isStandCommand(c.kind) ? "test stand" : "vehicle"}` }),
     );
   }, ACK_TIMEOUT_MS);
 }
@@ -199,6 +221,18 @@ function onSent(seq: number, kind: CommandKind) {
     atMs: performance.now(), missionTime: tele.flight?.time_s ?? null,
   });
   armAckTimeout(key);
+}
+
+/** Send a bridge control message (recording). Not a command: no seq, no ack, no command-log entry. */
+export function sendControl(msg: ControlMsg): boolean {
+  const open = sock !== null && sock.readyState === WebSocket.OPEN;
+  if (!open) {
+    useUi.setState({ recordingError: "no connection to bridge" });
+    return false;
+  }
+  useUi.setState({ recordingError: "" });
+  sock!.send(JSON.stringify(msg));
+  return true;
 }
 
 /** Send a command. Returns false if the bridge socket is not open. */

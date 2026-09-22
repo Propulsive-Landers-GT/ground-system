@@ -7,8 +7,14 @@
 
 import { useTick } from "../../store/ui";
 import { tele } from "../../store/telemetry";
-import { CHANNEL_LABEL, CHANNEL_UNIT, VALVE_LABEL, type StandChannel, type ValveId } from "../../protocol";
+import { CHANNEL_LABEL, CHANNEL_UNIT, VALVE_LABEL, outputOn, type StandChannel, type ValveId } from "../../protocol";
 import { num } from "../../lib/format";
+
+/** Commanded MTV opening from telemetry, if the sender reports one. */
+const mtvPercent = (): number | null => {
+  const p = tele.stand?.mtv_percent;
+  return p === null || p === undefined || !Number.isFinite(p) ? null : p;
+};
 
 type Node =
   | "gn2a" | "gn2b" | "puVntOut" | "puMvntOut" | "rcs1Out" | "rcs2Out"
@@ -45,6 +51,10 @@ const DEAD_ENDS: Node[] = ["puVntOut", "puMvntOut", "rcs1Out", "rcs2Out", "oVntO
 
 function isOpen(id: ValveId): boolean {
   const v = tele.valves.get(id);
+  if (id === "Mtv") {
+    const p = mtvPercent();
+    if (p !== null) return p > 0.5;
+  }
   if (!v) return false;
   return v.state === "Open" || (v.state !== "Closed" && (v.position_deg ?? 0) > 1);
 }
@@ -93,7 +103,9 @@ function Valve({ v }: { v: ValvePos }) {
   const state = st?.state ?? "Missing";
   const word = state === "Open" ? "OPEN" : state === "Closed" ? "CLOSED" : state === "Unknown" ? "UNKNOWN ?" : "—";
   const pos = st?.position_deg;
-  const text = pos !== null && pos !== undefined ? `${word} ${num(pos, 0)}°` : word;
+  const pct = v.id === "Mtv" ? mtvPercent() : null;
+  // The MTV is a throttle: the commanded percent says more than open/closed.
+  const text = pct !== null ? `${word} ${num(pct, 0)} %` : pos !== null && pos !== undefined ? `${word} ${num(pos, 0)}°` : word;
   const side = v.labelSide ?? "below";
   const lx = side === "right" ? 14 + (v.dx ?? 0) : 0;
   const anchor = side === "right" ? "start" : "middle";
@@ -169,6 +181,19 @@ const Vent = ({ x, y, dir }: { x: number; y: number; dir: "up" | "down" | "right
   );
 };
 
+function IgniterLamp() {
+  const on = outputOn(tele.stand, "Igniter");
+  return (
+    <g className="ig-lamp" data-on={on || undefined} transform="translate(700,487)">
+      <title>{`Igniter ${on ? "ON" : "off"}`}</title>
+      {on && <circle r={11} className="ig-glow" />}
+      <circle r={5.5} className="ig-dot" />
+      <path d="M-3,2 Q0,-6 3,2 Q0,0 -3,2 Z" className="ig-flame" />
+      <text x={10} y={4} className="passive-name ig-word">{on ? "IGNITER ON" : "igniter"}</text>
+    </g>
+  );
+}
+
 export function Pid() {
   useTick();
   const live = liveNodes();
@@ -228,8 +253,8 @@ export function Pid() {
         <rect x={670} y={382} width={12} height={36} className="injector" />
         <path d="M682,382 H735 L748,393 L785,374 V426 L748,407 L735,418 H682 Z" className="chamber" />
         <text x={709} y={404} textAnchor="middle" className="vessel-sub">chamber</text>
-        <text x={706} y={512} className="passive-name">igniter</text>
       </g>
+      <IgniterLamp />
 
       {VALVES.map((v) => <Valve key={v.id} v={v} />)}
       {TAGS.map((t) => <Tag key={t.ch} t={t} />)}

@@ -13,8 +13,11 @@ export function StandPlots() {
         series={PT.map((c, i) => ({ label: CHANNEL_LABEL[c], color: `--s${i + 1}` }))} />
       <Plot syncKey="stand" title="Temperatures" unit="°C" getData={cols("T1", "T2")}
         series={[{ label: "T1", color: "--s1" }, { label: "T2", color: "--s2" }]} />
-      <Plot syncKey="stand" title="Thrust (load cell)" unit="N" getData={cols("Thrust")}
-        series={[{ label: "thrust", color: "--s1" }]} />
+      {/* Load cells: the two force channels share an axis; mass gets its own plot so kg never sits on an N axis. */}
+      <Plot syncKey="stand" title="Load cells" unit="N" getData={cols("Thrust", "RcsThrust")}
+        series={[{ label: "thrust", color: "--s1" }, { label: "RCS", color: "--s4" }]} />
+      <Plot syncKey="stand" title="N2O mass" unit="kg" getData={cols("NitrousMass")}
+        series={[{ label: "load cell", color: "--s3" }]} />
     </section>
   );
 }

@@ -1,6 +1,8 @@
+import { useEffect, useRef, useState } from "react";
 import { setTheme, useTick, useUi, type View } from "../../store/ui";
 import { tele } from "../../store/telemetry";
-import { clock, num } from "../../lib/format";
+import { clock, elapsed, num } from "../../lib/format";
+import { sendControl } from "../../ws";
 import mark from "../../assets/gtpl-mark.png";
 
 const TABS: { id: View; label: string; key: string }[] = [
@@ -88,7 +90,7 @@ function LinkBlock() {
             <span className="k">vehicle</span>
             <span className="v">{link?.vehicle_addr ?? "—"}</span>
           </span>
-          <span className="kv">
+          <span className="kv kv-rate" title="Flight telemetry rate">
             <span className="k">rate</span>
             <span className="v w4">{num(link?.rate_hz, 0)}</span>
             <span className="u">Hz</span>
@@ -111,7 +113,7 @@ function RxAge() {
   // Prefer our own measurement (time since the last flight packet reached this browser).
   const age = hasFlight ? (performance.now() - tele.flightRxMs) / 1000 : link?.last_rx_age_s ?? null;
   return (
-    <span className="kv" data-flag={age !== null && age > 1 ? "warn" : undefined}>
+    <span className="kv kv-rx" data-flag={age !== null && age > 1 ? "warn" : undefined} title="Time since the last flight packet">
       <span className="k">last rx</span>
       <span className="v w5">{age === null ? "—" : age > 99 ? ">99" : num(age, age < 10 ? 2 : 0)}</span>
       <span className="u">s</span>
@@ -119,23 +121,43 @@ function RxAge() {
   );
 }
 
+/** One badge per data source on the link: the vehicle (or sim / replay) and, separately, the test stand. */
 function SourceBadge() {
   const source = useUi((s) => s.source);
-  if (!source) return <span className="source" data-source="none">NO DATA</span>;
+  const standSource = useUi((s) => s.standSource);
+  const hasStand = useUi((s) => s.hasStand);
+  const standStale = useUi((s) => s.standStale);
+  const stand = hasStand && standSource === "Stand";
+  if (!source && !stand) return <span className="source" data-source="none">NO DATA</span>;
   return (
-    <span
-      className="source"
-      data-source={source}
-      title={
-        source === "Vehicle"
-          ? "Telemetry is from the real vehicle. Commands act on hardware."
-          : source === "Sim"
-            ? "Telemetry is from the simulator"
-            : "Replaying a recorded session. Commands are disabled."
-      }
-    >
-      {source === "Vehicle" ? "VEHICLE" : source === "Sim" ? "SIM" : "REPLAY"}
-      {source === "Vehicle" && <small>live hardware</small>}
+    <span className="sources">
+      {source && (
+        <span
+          className="source"
+          data-source={source}
+          title={
+            source === "Vehicle"
+              ? "Telemetry is from the real vehicle. Commands act on hardware."
+              : source === "Sim"
+                ? "Telemetry is from the simulator"
+                : "Replaying a recorded session. Commands are disabled."
+          }
+        >
+          {source === "Vehicle" ? "VEHICLE" : source === "Sim" ? "SIM" : "REPLAY"}
+          {source === "Vehicle" && <small>live hardware</small>}
+        </span>
+      )}
+      {stand && (
+        <span
+          className="source"
+          data-source="Stand"
+          data-stale={standStale || undefined}
+          title={standStale ? "Test-stand telemetry has stopped" : "Test-stand telemetry is flowing from gs-stand. Stand commands act on hardware."}
+        >
+          STAND
+          <small>{standStale ? "stale" : "live hardware"}</small>
+        </span>
+      )}
     </span>
   );
 }
@@ -149,13 +171,102 @@ function MissionClock() {
   );
 }
 
+/**
+ * Recording is operator-controlled (docs/DESIGN.md, Recording). Idle: a Record button that opens a tiny
+ * name field. Recording: pulsing REC, directory name, elapsed time and Stop. When either system is armed
+ * and nothing is being recorded, the idle state shouts a little.
+ */
 function Recording() {
   const rec = useUi((s) => s.link?.recording ?? null);
-  const name = rec ? rec.split(/[\\/]/).pop() : null;
+  const ws = useUi((s) => s.ws);
+  const error = useUi((s) => s.recordingError);
+  const phase = useUi((s) => s.phase);
+  const standMode = useUi((s) => s.standStatus?.mode ?? null);
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+
+  const armed = phase === "Armed" || phase === "Ascent" || phase === "Hover" || phase === "Descent" ||
+    standMode === "Armed" || standMode === "Sequence";
+  const dirName = rec ? rec.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? rec : null;
+
+  useEffect(() => {
+    if (naming) input.current?.focus();
+  }, [naming]);
+  useEffect(() => {
+    if (rec) setNaming(false);
+  }, [rec]);
+
+  const start = () => {
+    const clean = name.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (sendControl(clean ? { control: "start_recording", name: clean } : { control: "start_recording" })) {
+      setNaming(false);
+      setName("");
+    }
+  };
+
+  if (rec) {
+    return (
+      <span className="recording" data-on title={rec}>
+        <span className="rec-dot" aria-hidden="true" />
+        <span className="rec-word">REC</span>
+        <span className="rec-name">{dirName}</span>
+        <RecElapsed />
+        <button className="btn btn-quiet rec-stop" onClick={() => sendControl({ control: "stop_recording" })} title="Stop recording; the files are flushed and closed">
+          Stop
+        </button>
+        {error && <span className="rec-error" role="alert">{error}</span>}
+      </span>
+    );
+  }
   return (
-    <span className="recording" data-on={rec ? true : undefined} title={rec ?? "The bridge is not recording this session"}>
-      <span className="rec-dot" aria-hidden="true" />
-      <span className="rec-name">{name ?? "not recording"}</span>
+    <span className="recording" data-armed={(armed && !naming) || undefined} title="The bridge is not recording. Data on the link is not being saved.">
+      {naming ? (
+        <form
+          className="rec-form"
+          onSubmit={(e) => { e.preventDefault(); start(); }}
+        >
+          <input
+            ref={input}
+            className="rec-input"
+            value={name}
+            placeholder="name, e.g. hotfire-3"
+            aria-label="Recording name (optional)"
+            maxLength={40}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") { setNaming(false); setName(""); } }}
+          />
+          <button type="submit" className="btn btn-quiet rec-start" title="Start recording (Enter)">Start</button>
+          <button type="button" className="btn btn-quiet" onClick={() => { setNaming(false); setName(""); }} title="Cancel (Esc)">Cancel</button>
+        </form>
+      ) : (
+        <>
+          <span className="rec-hint">{armed ? "NOT RECORDING" : "not recording"}</span>
+          <button
+            className="btn btn-quiet rec-btn"
+            aria-disabled={ws !== "open" || undefined}
+            data-disabled={ws !== "open" || undefined}
+            title={ws === "open" ? "Start recording this session to logs/ on the bridge" : "No connection to the bridge"}
+            onClick={() => ws === "open" && setNaming(true)}
+          >
+            <span className="rec-dot" aria-hidden="true" />
+            Record
+          </button>
+        </>
+      )}
+      {error && <span className="rec-error" role="alert">{error}</span>}
+    </span>
+  );
+}
+
+function RecElapsed() {
+  useTick();
+  const since = useUi((s) => s.recordingSinceMs);
+  const s = since === null ? null : (performance.now() - since) / 1000;
+  // Counted from when this browser first saw the recording, so it is a lower bound after a reconnect.
+  return (
+    <span className="rec-elapsed val" title="Time since this browser saw the recording start">
+      {elapsed(s)}
     </span>
   );
 }

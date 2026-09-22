@@ -3,7 +3,7 @@
 
 import { create } from "zustand";
 import type {
-  CommandKind, ControlMode, EventMsg, FlightPhase, LinkStatus, ParamsMsg, Source,
+  CommandKind, ControlMode, EventMsg, FlightPhase, LinkStatus, ParamsMsg, Source, StandStatus,
 } from "../protocol";
 import { tele } from "./telemetry";
 
@@ -39,6 +39,16 @@ interface UiState {
   source: Source | null;
   controlMode: ControlMode | null;
   terminated: boolean;
+  /** Stand telemetry has arrived this session (from a vehicle, a sim or the stand adapter). */
+  hasStand: boolean;
+  standStale: boolean;
+  /** Source of the stand telemetry currently shown; "Stand" means the real adapter. */
+  standSource: Source | null;
+  standStatus: StandStatus | null;
+  /** performance.now() when `link.recording` last became non-null; null while idle. */
+  recordingSinceMs: number | null;
+  /** Last `error` from the bridge (recording control), cleared on the next attempt. */
+  recordingError: string;
   params: ParamsMsg | null;
   paramsRev: number;
   events: EventEntry[];
@@ -63,6 +73,12 @@ export const useUi = create<UiState>(() => ({
   source: null,
   controlMode: null,
   terminated: false,
+  hasStand: false,
+  standStale: false,
+  standSource: null,
+  standStatus: null,
+  recordingSinceMs: null,
+  recordingError: "",
   params: null,
   paramsRev: 0,
   events: [],
@@ -98,7 +114,13 @@ export function startTick() {
   if (tickTimer !== undefined) return;
   tickTimer = window.setInterval(() => {
     const s = useUi.getState();
-    const stale = s.hasFlight && performance.now() - tele.flightRxMs > STALE_AFTER_MS;
-    useUi.setState(stale !== s.stale ? { tick: s.tick + 1, stale } : { tick: s.tick + 1 });
+    const now = performance.now();
+    const stale = s.hasFlight && now - tele.flightRxMs > STALE_AFTER_MS;
+    const standStale = s.hasStand && now - tele.standRxMs > STALE_AFTER_MS;
+    useUi.setState(
+      stale !== s.stale || standStale !== s.standStale
+        ? { tick: s.tick + 1, stale, standStale }
+        : { tick: s.tick + 1 },
+    );
   }, 80);
 }

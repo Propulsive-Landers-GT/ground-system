@@ -9,11 +9,11 @@ import "./styles/tokens.css";
 import "./styles/app.css";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import { connect, sendCommand } from "./ws";
+import { connect, sendCommand, sendControl } from "./ws";
 import { startTick } from "./store/ui";
 
 // Dev-only hook so scripts/smoke.mjs can send a command the UI would have interlocked.
-if (import.meta.env.DEV) (window as unknown as { __gs: unknown }).__gs = { sendCommand };
+if (import.meta.env.DEV) (window as unknown as { __gs: unknown }).__gs = { sendCommand, sendControl };
 
 connect();
 startTick();

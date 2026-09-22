@@ -55,6 +55,8 @@ export const tele = {
   flightRxMs: 0,
   stand: null as StandTelemetry | null,
   standRxMs: 0,
+  /** Last time a `stand` message with `source: "Stand"` (the real adapter) arrived. */
+  standSourceRxMs: -1e9,
   channels: new Map<StandChannel, number>(),
   valves: new Map<ValveId, ValveStatus>(),
   trajectory: null as TrajectoryMsg | null,
@@ -135,11 +137,21 @@ export function ingestFlight(m: FlightTelemetry) {
 }
 
 const srow = new Float64Array(1 + STAND_CHANNELS.length);
+/** A session can carry `stand` messages from both a vehicle/sim and a real test stand. */
+const STAND_PRIORITY_MS = 2000;
 
-export function ingestStand(m: StandTelemetry) {
-  if (tele.stand && m.time_s < tele.stand.time_s - 0.5) tele.standBuf.clear();
+/** Returns false when the message was dropped in favour of the physical stand's telemetry. */
+export function ingestStand(m: StandTelemetry): boolean {
+  const now = performance.now();
+  if (m.source === "Stand") {
+    tele.standSourceRxMs = now;
+  } else if (now - tele.standSourceRxMs < STAND_PRIORITY_MS) {
+    // The real stand is the authority on the valves; a sim's propulsion model must not overwrite it.
+    return false;
+  }
+  if (tele.stand && (m.time_s < tele.stand.time_s - 0.5 || m.source !== tele.stand.source)) tele.standBuf.clear();
   tele.stand = m;
-  tele.standRxMs = performance.now();
+  tele.standRxMs = now;
   // Only what this message carries is "present"; anything absent must read as missing, not zero.
   tele.channels.clear();
   srow.fill(NaN);
@@ -151,7 +163,13 @@ export function ingestStand(m: StandTelemetry) {
   }
   tele.valves.clear();
   for (const v of m.valves) tele.valves.set(v.id, v);
+  // A stand that drives the MTV by percent may not list it as a valve; the commanded opening is its state.
+  const pct = m.mtv_percent;
+  if (!tele.valves.has("Mtv") && pct !== null && pct !== undefined && Number.isFinite(pct)) {
+    tele.valves.set("Mtv", { id: "Mtv", state: pct > 0.5 ? "Open" : "Closed", position_deg: null });
+  }
   tele.standBuf.push(srow);
+  return true;
 }
 
 export function ingestTrajectory(m: TrajectoryMsg) {

@@ -55,12 +55,13 @@ svg text, input, button { font-variant-numeric: tabular-nums; font-feature-setti
   grid-template-rows: auto minmax(90px, 0.8fr) minmax(110px, 1.2fr);
 }
 
-/* Stale or no telemetry: live values dim, nothing is hidden */
-.app[data-stale] .main [data-live], .app[data-stale] .clock { opacity: 0.45; }
-.app[data-stale] .main :is(.limitbar, .massbar, .thrustbar, .oklight, .lamp, .bullseye) { opacity: 0.45; }
+/* Stale or no telemetry: live values dim, nothing is hidden. Flight staleness dims the flight view,
+   stand staleness the stand view; the header clock follows the flight link. */
+.app[data-stale] .flightview [data-live], .app[data-stale] .clock { opacity: 0.45; }
+.app[data-stale] .flightview :is(.limitbar, .massbar, .thrustbar, .oklight, .lamp, .bullseye) { opacity: 0.45; }
 .scene-stale { z-index: 1; position: absolute; left: 50%; top: var(--sp-4); transform: translateX(-50%); background: var(--caution-bg); color: var(--caution); border: 1px solid var(--caution); padding: 2px var(--sp-4); border-radius: var(--pill); font-weight: 700; font-size: var(--fs-sm); pointer-events: none; }
-.app[data-waiting] .main [data-live] { color: var(--text-3); }
-.standview[data-stand-stale] .tag-val, .standview[data-stand-stale] .chip { opacity: 0.45; }
+.app[data-waiting] .main [data-live], .standview[data-stand-waiting] [data-live] { color: var(--text-3); }
+.standview[data-stand-stale] :is(.tag-val, .chip, .lc-value, .mtv-tele, .ig-lamp, .valve-body, .valve-state) { opacity: 0.45; }
 
 .panel {
   background: var(--panel);
@@ -76,7 +77,7 @@ svg text, input, button { font-variant-numeric: tabular-nums; font-feature-setti
   border-bottom: 1px solid var(--line);
   flex: none; white-space: nowrap;
 }
-.title-note { font-weight: 500; font-size: var(--fs-sm); color: var(--text-3); margin-left: auto; text-align: right; text-transform: none; letter-spacing: 0; }
+.title-note { font-weight: 500; font-size: var(--fs-sm); color: var(--text-3); margin-left: auto; text-align: right; text-transform: none; letter-spacing: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .flag-warn { color: var(--warn); font-weight: 700; }
 .sub-title { color: var(--accent); margin: var(--sp-4) 0 var(--sp-2); }
 .panel-scroll { overflow: auto; min-height: 0; padding: var(--sp-3) var(--sp-4) var(--sp-4); scrollbar-width: thin; }
@@ -143,17 +144,56 @@ svg text, input, button { font-variant-numeric: tabular-nums; font-feature-setti
 .source[data-source="Sim"] { background: var(--navy); color: #ffffff; border-color: #5f86c2; }
 .source[data-source="Replay"] { color: var(--text-2); border-style: dashed; }
 .source[data-source="none"] { color: var(--text-3); font-weight: 500; letter-spacing: 0.08em; }
+/* The stand is live hardware too: same solid gold as VEHICLE, kept apart from it by the word. */
+.sources { gap: var(--sp-3); }
+.source[data-source="Stand"] { background: var(--gold); color: var(--on-gold); border-color: var(--gold); height: 28px; font-size: var(--fs-md); letter-spacing: 0.12em; }
+.source[data-source="Stand"][data-stale] { background: var(--caution-bg); color: var(--caution); border-color: var(--caution); }
 
 .clock { font-size: var(--fs-xl); font-weight: 700; min-width: 5.9em; letter-spacing: -0.02em; }
-.recording { gap: var(--sp-3); color: var(--text-3); margin-left: auto; min-width: 0; font-size: var(--fs-sm); }
-.rec-name { overflow: hidden; text-overflow: ellipsis; max-width: 230px; }
+
+/* Recording control. Idle is quiet; idle while something is armed is orange; recording is red and pulsing. */
+.recording { gap: var(--sp-3); color: var(--text-3); margin-left: auto; min-width: 0; font-size: var(--fs-sm); position: relative; }
+.rec-name { overflow: hidden; text-overflow: ellipsis; max-width: 150px; color: var(--text-2); }
 .rec-dot { width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--text-3); flex: none; }
-.recording[data-on] { color: var(--text-2); }
-.recording[data-on] .rec-dot { background: var(--warn); border-color: var(--warn); }
+.rec-hint { letter-spacing: 0.04em; }
+.recording[data-armed] .rec-hint { color: var(--caution); font-weight: 700; letter-spacing: 0.1em; }
+.recording[data-armed] .rec-btn { border-color: var(--caution); color: var(--caution); }
+.rec-btn { display: inline-flex; align-items: center; gap: var(--sp-3); color: var(--text-2); }
+.rec-btn .rec-dot { border-color: var(--warn); background: var(--warn); }
+.rec-btn[data-disabled] .rec-dot { background: transparent; border-color: var(--text-3); }
+.recording[data-on] { color: #fff; }
+.recording[data-on] .rec-dot { background: var(--warn); border-color: var(--warn); width: 10px; height: 10px; box-shadow: 0 0 0 0 rgba(255, 90, 95, 0.7); }
+.rec-word { font-weight: 700; letter-spacing: 0.18em; color: var(--warn); }
+.rec-elapsed { font-weight: 600; min-width: 4ch; text-align: right; color: #fff; }
+.rec-stop { color: #fff; border-color: var(--warn); }
+.rec-form { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.rec-input {
+  width: 150px; height: 24px; padding: 0 var(--sp-3); text-align: left;
+  background: var(--inset); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); color: #fff;
+}
+.rec-input::placeholder { color: var(--text-3); }
+.rec-start { border-color: var(--warn); color: #fff; background: var(--warn-solid); }
+.rec-error { color: var(--warn); font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: no-preference) {
+  .recording[data-on] .rec-dot { animation: rec-pulse 1.6s ease-out infinite; }
+  @keyframes rec-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(255, 90, 95, 0.75); }
+    70% { box-shadow: 0 0 0 7px rgba(255, 90, 95, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(255, 90, 95, 0); }
+  }
+}
 .theme-toggle { align-self: center; flex: none; }
 /* Montserrat is wide: on a 1280 laptop the address key and the tab key hints (both kept as titles) give way so
-   the recording name still fits beside the VEHICLE badge. */
-@media (max-width: 1400px) { .kv-addr .k, .tab kbd { display: none; } }
+   the recording control still fits beside the VEHICLE and STAND badges. */
+@media (max-width: 1400px) {
+  .kv-addr .k, .kv-rate .k, .tab kbd, .recording[data-on] .rec-name { display: none; }
+  .kv-rx .k { visibility: hidden; width: 0; margin: 0; overflow: hidden; }
+  .kv-rx::before { content: "rx"; color: var(--text-3); letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600; font-size: var(--fs-xs); margin-right: 2px; }
+  .linkblock { gap: var(--sp-3); }
+  .link-state { min-width: 0; }
+  /* Two live badges side by side: the gold blocks carry the message, the captions go. */
+  .sources:has(.source:nth-child(2)) .source small { display: none; }
+}
 
 /* ------------------------------------------------------------------ phase bar */
 .phasebar {
@@ -381,7 +421,6 @@ svg text, input, button { font-variant-numeric: tabular-nums; font-feature-setti
 /* ------------------------------------------------------------------ plots */
 .plots { display: grid; gap: var(--sp-3); min-height: 0; min-width: 0; }
 .plots-flight { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); }
-.plots-stand { grid-template-columns: 2fr 1fr 1fr; }
 .plot { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .plot-head { display: flex; align-items: baseline; gap: var(--sp-3); padding: 3px var(--sp-4) 0; font-size: var(--fs-sm); white-space: nowrap; overflow: hidden; }
 .plot-title { color: var(--text-2); letter-spacing: 0.1em; }
@@ -444,14 +483,133 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 22px; }
 /* ------------------------------------------------------------------ test stand */
 .standview {
   height: 100%; display: grid; gap: var(--sp-3);
-  grid-template-columns: minmax(0, 1fr) 306px;
-  grid-template-rows: minmax(0, 1fr) 200px;
-  grid-template-areas: "pid valves" "plots plots";
+  grid-template-columns: minmax(0, 1fr) 318px;
+  grid-template-rows: auto minmax(0, 1fr) 186px;
+  grid-template-areas: "strip strip" "pid col" "plots plots";
 }
+.standstrip { grid-area: strip; }
 .pidpanel { grid-area: pid; }
-.valves { grid-area: valves; }
-.plots-stand { grid-area: plots; }
+.standcol { grid-area: col; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: var(--sp-3); min-height: 0; }
+.plots-stand { grid-area: plots; grid-template-columns: 2fr 1fr 1.2fr 1fr; }
 .pid { flex: 1; min-height: 0; width: 100%; padding: var(--sp-3); }
+
+/* status strip */
+.standstrip {
+  display: flex; align-items: center; gap: var(--sp-5);
+  min-height: 36px; padding: var(--sp-2) var(--sp-4);
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  white-space: nowrap;
+}
+.stand-mode {
+  font-weight: 700; font-size: var(--fs-sm); letter-spacing: 0.16em; min-width: 92px; text-align: center;
+  padding: 3px 12px; border: 1px solid var(--line-strong); border-radius: var(--pill); color: var(--text-3);
+}
+.stand-mode[data-mode="Safe"] { color: var(--ok); border-color: var(--ok); background: var(--ok-bg); }
+.stand-mode[data-mode="Armed"] { color: var(--accent-fg); border-color: var(--accent); background: var(--accent); }
+/* Sequence: a live burn. Orange with running stripes, unlike the flat gold of Armed. */
+.stand-mode[data-mode="Sequence"] {
+  color: var(--on-caution); border-color: var(--caution);
+  background: repeating-linear-gradient(-55deg, var(--caution) 0 8px, color-mix(in srgb, var(--caution) 78%, #000) 8px 16px);
+  background-size: 200% 100%;
+}
+:root[data-theme="light"] .stand-mode[data-mode="Sequence"] { color: #fff; }
+.stand-unconfigured { color: var(--text-3); font-size: var(--fs-sm); }
+/* Lamps and link stack two lines high so the sequence progress keeps the width. */
+.stand-lamps { display: grid; gap: 2px; }
+.stand-lamp { flex: none; justify-content: flex-start; padding: 0 8px; font-size: var(--fs-xs); line-height: 13px; letter-spacing: 0.04em; text-transform: none; }
+.stand-lamp[data-state="unknown"] { border-style: dashed; }
+.stand-link { display: grid; grid-template-columns: auto auto auto auto; column-gap: var(--sp-2); align-items: baseline; font-size: var(--fs-sm); line-height: 1.2; }
+.stand-link .dot { align-self: center; margin-right: 2px; }
+.stand-link[data-state="up"] .dot { background: var(--ok); }
+.stand-link[data-state="down"] .dot { border-radius: 0; transform: rotate(45deg); }
+.stand-link[data-state="down"] .addr { color: var(--warn); }
+.stand-link .addr { grid-column: 2 / -1; color: var(--text-3); font-size: var(--fs-xs); text-align: left; }
+
+.seqprog { margin-left: auto; display: flex; align-items: center; gap: var(--sp-4); min-width: 0; flex: 1 1 0; justify-content: flex-end; }
+.seqprog-idle { color: var(--text-3); font-size: var(--fs-sm); }
+.seq-name { font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; font-size: var(--fs-sm); color: var(--caution); flex: none; }
+.seq-clock { font-size: var(--fs-xl); font-weight: 700; letter-spacing: -0.02em; min-width: 3.6em; text-align: right; flex: none; }
+.seq-dur { color: var(--text-3); font-size: var(--fs-sm); font-weight: 500; letter-spacing: 0; }
+.seq-bar { position: relative; flex: 0 1 200px; min-width: 100px; height: 10px; background: var(--inset); border: 1px solid var(--line-strong); border-radius: var(--pill); overflow: hidden; }
+.seq-bar-fill { position: absolute; inset: 0; transform-origin: left center; background: var(--caution); }
+/* The next step is what the operator is waiting for: it gets the slack, everything else is fixed. */
+.seq-next { flex: 1 1 auto; min-width: 80px; overflow: hidden; text-overflow: ellipsis; font-size: var(--fs-sm); color: var(--text-2); }
+.seq-next .k { color: var(--text-3); letter-spacing: 0.1em; text-transform: uppercase; font-size: var(--fs-xs); font-weight: 600; }
+.seq-next b { color: var(--text); }
+.seq-steps { color: var(--text-3); font-size: var(--fs-sm); flex: none; }
+
+/* rail: stand command panel */
+.seq-block { display: grid; gap: var(--sp-3); padding: 0 var(--sp-4); }
+.select {
+  width: 100%; height: 30px; padding: 0 var(--sp-4);
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  font: inherit; font-weight: 600;
+}
+.select:disabled { color: var(--text-3); border-color: var(--line); background: transparent; }
+.start-seq { min-height: 40px; }
+.start-seq:not([data-disabled]) { border-color: var(--accent); }
+.seq-running { display: grid; grid-template-columns: 1fr auto; gap: 3px var(--sp-4); align-items: baseline; padding: var(--sp-3) var(--sp-4); border: 1px solid var(--caution); border-radius: var(--radius); background: var(--caution-bg); }
+.seq-running-name { font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--caution); }
+.seq-running-clock { font-size: var(--fs-lg); font-weight: 700; }
+.seq-running .seq-bar { grid-column: 1 / -1; flex: none; width: 100%; margin: 2px 0; }
+.seq-running .seq-next { grid-column: 1 / -1; white-space: normal; overflow: visible; }
+.seq-running .seq-steps { grid-column: 1 / -1; }
+.seq-running .hint { grid-column: 1 / -1; }
+/* Stand abort: same red as the flight abort, but it wears the stand's hazard stripe and says whose it is. */
+.abort-owner { display: block; margin-bottom: var(--sp-2); text-transform: uppercase; letter-spacing: var(--eyebrow-track); font-weight: 600; font-size: var(--fs-xs); color: var(--caution); }
+.abort-stand { border-left: 10px solid transparent; border-image: repeating-linear-gradient(-45deg, var(--caution) 0 6px, #111 6px 12px) 0 0 0 10; }
+.abort-stand[data-disabled] { border-image: none; border-left-width: 2px; }
+.abort-stand .hold-label { letter-spacing: 0.1em; font-size: var(--fs-lg); }
+.standcmd[data-mode="Sequence"] .panel-title .title-note { color: var(--caution); font-weight: 700; }
+.standcmd[data-mode="Armed"] .panel-title .title-note { color: var(--accent); font-weight: 700; }
+
+/* outputs panel */
+.outputs-body { display: grid; gap: var(--sp-4); padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+.mtv { display: grid; gap: var(--sp-2); }
+.mtv-head { display: flex; align-items: baseline; justify-content: space-between; }
+.mtv-tele { font-size: var(--fs-lg); }
+.mtv-tele .val { font-weight: 700; }
+.mtv-tele .val[data-missing] { color: var(--text-3); }
+.mtv-row { display: grid; grid-template-columns: 1fr 66px; gap: var(--sp-4); align-items: center; }
+.mtv-row input[type="range"] { height: 20px; }
+.mtv[data-disabled] input[type="range"] { opacity: 0.5; cursor: not-allowed; }
+.mtv-entry { display: inline-flex; align-items: center; gap: 2px; }
+.mtv-entry .winput { width: 46px; }
+.mtv-entry[data-dirty] .winput { border-color: var(--caution); }
+.winput:disabled { color: var(--text-3); cursor: not-allowed; }
+.quick { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-2); }
+.quick .btn[aria-pressed="true"]:not([data-disabled]) { border-color: var(--accent); color: var(--accent); }
+.out-row { display: flex; align-items: center; gap: var(--sp-3); }
+.out-row .readout-label { min-width: 62px; }
+.out-row .lamp { min-width: 40px; text-align: center; }
+.lamp-fire[data-on] { background: var(--caution); border-color: var(--caution); color: var(--on-caution); }
+.fire { margin-left: auto; min-height: 30px; padding: 2px var(--sp-4); }
+.fire:not([data-disabled]) { border-color: var(--caution); }
+.fire:not([data-disabled]) .hold-fill { background: var(--caution-bg); }
+.fire[data-fired="true"] .hold-fill { background: var(--caution); }
+.fire .hold-label { font-size: var(--fs-sm); }
+.daq-switch { margin-left: auto; font-weight: 500; font-size: var(--fs-sm); color: var(--text-2); }
+.daq-switch input { accent-color: var(--accent); }
+.daq-switch input:disabled { cursor: not-allowed; }
+.lc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
+.lc { display: grid; gap: 1px; min-width: 0; }
+.lc .readout-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lc-value { display: flex; align-items: baseline; gap: 2px; font-size: var(--fs-lg); }
+.lc-value .val { font-weight: 700; }
+.lc[data-missing] .val { color: var(--text-3); }
+
+/* events */
+.ev-tplus { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; font-weight: 700; color: var(--accent); }
+.ev-step { color: var(--text-3); font-size: var(--fs-xs); font-weight: 600; letter-spacing: 0.04em; }
+.log-text b { font-weight: 700; }
+
+/* P&ID igniter lamp */
+.ig-dot { fill: var(--panel-2); stroke: var(--text-3); stroke-width: 1.3; }
+.ig-flame { fill: none; }
+.ig-glow { fill: var(--caution); opacity: 0.28; }
+.ig-lamp[data-on] .ig-dot { fill: var(--caution); stroke: #fff; }
+.ig-lamp[data-on] .ig-flame { fill: #fff; }
+.ig-lamp[data-on] .ig-word { fill: var(--caution); font-weight: 700; }
 
 .pipe { fill: none; stroke: var(--pipe); stroke-width: 2; stroke-linecap: square; }
 .pipe[data-live] { stroke: var(--pipe-live); stroke-width: 2.6; }

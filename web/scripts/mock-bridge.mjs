@@ -4,9 +4,14 @@
 // flight 50 Hz, stand 20 Hz, trajectory 1 Hz, link 2 Hz, events, sent echo, acks with the
 // vehicle's interlock rules, params, jog with a 0.5 s deadman.
 //
-//   node scripts/mock-bridge.mjs [--port 8080] [--auto] [--source Sim|Vehicle|Replay] [--drop-acks]
+//   node scripts/mock-bridge.mjs [--port 8080] [--auto] [--source Sim|Vehicle|Replay] [--drop-acks] [--stand] [--record]
 //   --auto       arms and launches by itself, and relaunches after landing
 //   --drop-acks  never ack (to see the "no ack" state)
+//   --stand      also pretend a gs-stand is on the link: `stand` telemetry with source "Stand" (valves, MTV,
+//                igniter, load cells), `stand_status` at 5 Hz, the stand interlocks, three ~20 s sequences,
+//                and `link.stand`. Without it `link.stand` is null and the sim's own stand telemetry flows.
+//   --record     start with a recording open (like `gs-bridge --record`)
+// Recording control messages ({"control":"start_recording"|"stop_recording"}) toggle link.recording.
 
 import { WebSocketServer } from "ws";
 
@@ -17,6 +22,8 @@ const PORT = Number(opt("--port", 8080));
 const AUTO = flag("--auto");
 const SOURCE = opt("--source", "Sim");
 const DROP_ACKS = flag("--drop-acks");
+const STAND = flag("--stand");
+const STAND_ADDR = "127.0.0.1:18889";
 
 const wss = new WebSocketServer({ port: PORT, path: "/ws" });
 const send = (ws, type, data) => ws.readyState === 1 && ws.send(JSON.stringify({ type, data }));
@@ -35,6 +42,203 @@ const s = {
 };
 s.valves.PuVnt.state = "Open"; // normally-open vent
 s.valves.LfVnt.state = "Unknown";
+
+// ---------------------------------------------------------------- test stand (--stand)
+// Mirrors the "Test-stand rules enforced by gs-stand" table in docs/DESIGN.md.
+const SAFING_CLOSE = ["Omv", "IgV", "OFill", "PuMv", "PuIso", "PuFill"];
+const SAFING_OPEN = ["OVnt", "PuVnt", "LfVnt"];
+const OISO_STROKE_S = 21;
+const SEQUENCES = {
+  hotfire: [
+    [0, "DAQ sync on", () => (st.daq = true)],
+    [2, "OMV open", () => setStandValve("Omv", true)],
+    [3, "igniter on", () => (st.igniter = true)],
+    [5, "MTV 20 %", () => (st.mtv = 20)],
+    [8, "MTV 50 %", () => (st.mtv = 50)],
+    [11, "MTV 100 %", () => (st.mtv = 100)],
+    [16, "MTV 0 %", () => (st.mtv = 0)],
+    [17, "OMV close", () => setStandValve("Omv", false)],
+    [17.5, "igniter off", () => (st.igniter = false)],
+    [20, "DAQ sync off", () => (st.daq = false)],
+  ],
+  coldflow: [
+    [0, "DAQ sync on", () => (st.daq = true)],
+    [2, "OMV open", () => setStandValve("Omv", true)],
+    [3, "MTV 30 %", () => (st.mtv = 30)],
+    [8, "MTV 0 %", () => (st.mtv = 0)],
+    [9, "OMV close", () => setStandValve("Omv", false)],
+    [12, "DAQ sync off", () => (st.daq = false)],
+  ],
+  rcs: [
+    [0, "RCS1 open", () => setStandValve("Rcs1", true)],
+    [2, "RCS1 close", () => setStandValve("Rcs1", false)],
+    [3, "RCS2 open", () => setStandValve("Rcs2", true)],
+    [5, "RCS2 close", () => setStandValve("Rcs2", false)],
+    [8, "done", () => {}],
+  ],
+};
+const st = {
+  mode: "Safe", actuationOk: true, loadcellOk: true,
+  valves: Object.fromEntries(VALVES.map((v) => [v, { state: "Unknown", pos: v === "Mtv" ? 0 : null }])),
+  oisoUnknownUntil: -1,
+  mtv: 0, igniter: false, daq: false,
+  seq: null, // { name, t0, next }
+  thrust: 0, n2o: 14.2, rcsThrust: 0,
+  flapT: 0,
+};
+function setStandValve(id, open) {
+  const v = st.valves[id];
+  v.state = open ? "Open" : "Closed";
+  if (id === "Mtv") v.pos = open ? 90 : 0;
+  // OISO is motorized: no feedback for one full stroke.
+  if (id === "OIso") st.oisoUnknownUntil = s.t + OISO_STROKE_S;
+}
+function safingList() {
+  for (const id of SAFING_CLOSE) setStandValve(id, false);
+  for (const id of SAFING_OPEN) setStandValve(id, true);
+  st.igniter = false;
+  st.mtv = 0;
+}
+function standAbort(reason) {
+  const wasSeq = st.seq;
+  st.seq = null;
+  safingList();
+  st.mode = "Safe";
+  event(wasSeq ? "Critical" : "Warning", `Stand abort: ${reason}${wasSeq ? ` (sequence ${wasSeq.name} ended)` : ""}`);
+}
+function handleStand(cmd) {
+  const rej = (why) => ({ Rejected: why });
+  const name = typeof cmd === "string" ? cmd : Object.keys(cmd)[0];
+  const arg = typeof cmd === "string" ? null : cmd[name];
+  const inSeq = st.mode === "Sequence";
+  switch (name) {
+    case "Arm":
+      if (st.mode !== "Safe") return rej(inSeq ? "sequence running: only Abort" : "stand is already Armed");
+      if (!st.actuationOk) return rej("actuation Arduino link down");
+      if (!st.loadcellOk) return rej("load-cell Arduino link down");
+      st.mode = "Armed"; event("Info", "Stand armed"); return "Accepted";
+    case "Disarm":
+      if (inSeq) return rej("sequence running: use Abort");
+      safingList(); st.mode = "Safe"; event("Info", "Stand disarmed: safing list run"); return "Accepted";
+    case "Abort":
+      standAbort("operator"); return "Accepted";
+    case "SetMtvPercent":
+      if (st.mode !== "Armed") return rej(inSeq ? "sequence running: only Abort" : "stand not armed (Safe)");
+      if (!(arg >= 0 && arg <= 100)) return rej("percent out of range 0-100");
+      st.mtv = arg; return "Accepted";
+    case "SetOutput":
+      if (arg.id === "DaqSync") {
+        if (inSeq) return rej("sequence running: only Abort");
+        st.daq = !!arg.on; return "Accepted";
+      }
+      if (arg.id === "Igniter") {
+        if (st.mode !== "Armed") return rej(inSeq ? "sequence running: only Abort" : "igniter needs stand Armed (Safe)");
+        st.igniter = !!arg.on; event(arg.on ? "Warning" : "Info", `Igniter ${arg.on ? "ON" : "off"} (manual)`); return "Accepted";
+      }
+      return rej(`unknown output ${arg.id}`);
+    case "StartSequence":
+      if (st.mode !== "Armed") return rej(inSeq ? "sequence already running" : "stand not armed (Safe)");
+      if (!SEQUENCES[arg]) return rej(`unknown sequence "${arg}"`);
+      st.seq = { name: arg, t0: s.t, next: 0 };
+      st.mode = "Sequence";
+      event("Info", `Sequence ${arg} started (${SEQUENCES[arg].length} steps, ${seqDuration(arg)} s)`);
+      return "Accepted";
+    default:
+      return rej(`unknown stand command ${name}`);
+  }
+}
+const seqDuration = (name) => SEQUENCES[name][SEQUENCES[name].length - 1][0];
+function stepStand(dt) {
+  const seq = st.seq;
+  if (seq) {
+    const steps = SEQUENCES[seq.name];
+    const t = s.t - seq.t0;
+    while (seq.next < steps.length && t >= steps[seq.next][0]) {
+      const [at, text, fn] = steps[seq.next];
+      fn();
+      event("Info", `T+${at.toFixed(1)} ${text}`);
+      seq.next++;
+    }
+    if (seq.next >= steps.length) {
+      st.seq = null;
+      st.mode = "Armed";
+      event("Info", `Sequence ${seq.name} complete; stand Armed`);
+    }
+  }
+  // Physics-ish: thrust follows MTV while the main is open and the igniter has lit it.
+  const flowing = st.valves.Omv.state === "Open" && st.mtv > 0;
+  const burning = flowing && (st.igniter || st.thrust > 100);
+  const target = burning ? 1100 * (st.mtv / 100) : flowing ? 40 : 0;
+  st.thrust += (target - st.thrust) * Math.min(1, dt * 6);
+  if (flowing) st.n2o = Math.max(0, st.n2o - 0.35 * (st.mtv / 100) * dt);
+  const rcsOn = st.valves.Rcs1.state === "Open" || st.valves.Rcs2.state === "Open";
+  st.rcsThrust += ((rcsOn ? 16 : 0) - st.rcsThrust) * Math.min(1, dt * 8);
+  // The load-cell Arduino drops out now and then so the lamp and the Arm interlock get exercised.
+  st.flapT += dt;
+  st.loadcellOk = !(st.flapT % 90 > 84 && st.mode === "Safe");
+}
+function standStatus() {
+  const seq = st.seq;
+  let progress = null;
+  if (seq) {
+    const steps = SEQUENCES[seq.name];
+    const n = steps[seq.next];
+    progress = {
+      name: seq.name, t_s: s.t - seq.t0, duration_s: seqDuration(seq.name),
+      next_step: n ? [seq.next, `T+${n[0].toFixed(1)} ${n[1]}`] : null, steps_total: steps.length,
+    };
+  }
+  return {
+    time_s: s.t, mode: st.mode, actuation_link_ok: st.actuationOk, loadcell_link_ok: st.loadcellOk,
+    sequences: Object.keys(SEQUENCES), sequence: progress,
+  };
+}
+function standTelemetry() {
+  const tankP = 48 + (st.n2o - 14.2) * 1.5 + noise(0.05);
+  const pc = st.thrust / 55;
+  const channels = [
+    ["Opt", tankP], ["Ipt", st.thrust > 50 ? pc * 1.25 + noise(0.1) : 1.0 + noise(0.02)], ["Ept", pc + 1.0 + noise(0.08)],
+    ["M1", st.valves.Omv.state === "Open" ? tankP - 1.5 + noise(0.1) : 1.0], ["M2", st.thrust > 50 ? pc * 1.4 + noise(0.1) : 1.0],
+    ["Pupt", st.valves.PuIso.state === "Open" ? 60 + noise(0.2) : 1.0 + noise(0.02)],
+    ["Lfpt", st.valves.IgV.state === "Open" ? 6 + noise(0.05) : 1.0 + noise(0.02)],
+    ["T1", 18 + noise(0.05)], ["T2", st.thrust > 50 ? 240 + st.thrust / 6 + noise(2) : 24 + noise(0.2)],
+    ["Thrust", st.thrust + noise(3)], ["NitrousMass", st.n2o + noise(0.01)], ["RcsThrust", st.rcsThrust + noise(0.3)],
+  ];
+  const outputs = [];
+  if (st.igniter) outputs.push("Igniter");
+  if (st.daq) outputs.push("DaqSync");
+  return {
+    time_s: s.t, source: "Stand", channels,
+    valves: VALVES.map((id) => ({
+      id,
+      // The MTV is driven by percent, so its state follows the commanded opening.
+      state: id === "OIso" && s.t < st.oisoUnknownUntil ? "Unknown" : id === "Mtv" ? (st.mtv > 0 ? "Open" : "Closed") : st.valves[id].state,
+      position_deg: id === "Mtv" ? st.mtv * 0.9 : st.valves[id].pos,
+    })),
+    outputs_on: outputs, mtv_percent: st.mtv,
+  };
+}
+
+// ---------------------------------------------------------------- recording (control messages)
+let recording = flag("--record") ? recDir("") : null;
+function recDir(name) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  const clean = String(name ?? "").replace(/[^A-Za-z0-9._-]/g, "");
+  return `logs/${stamp}${clean ? `-${clean}` : ""}`;
+}
+function handleControl(ws, msg) {
+  const err = (message) => send(ws, "error", { message });
+  if (msg.control === "start_recording") {
+    if (recording) return err(`already recording to ${recording}`);
+    recording = recDir(msg.name);
+    event("Info", `Recording started: ${recording}`);
+  } else if (msg.control === "stop_recording") {
+    if (!recording) return err("not recording");
+    event("Info", `Recording stopped: ${recording}`);
+    recording = null;
+  } else return err(`unknown control ${msg.control}`);
+  broadcast("link", linkStatus());
+}
 
 function event(severity, text) {
   const e = { time_s: s.t, severity, text };
@@ -109,11 +313,21 @@ function handle(kind) {
       if (arg === "Jog" && s.phase !== "Standby") return rej("jog only in Standby");
       s.mode = arg; event("Info", `Control mode -> ${arg}`); return "Accepted";
     case "SetValve":
+      if (STAND) {
+        // The bridge routes SetValve to the stand when one is configured.
+        if (st.mode !== "Armed") return rej(st.mode === "Sequence" ? "sequence running: only Abort" : "stand not armed (Safe)");
+        if (!st.valves[arg.id]) return rej("unknown valve");
+        setStandValve(arg.id, arg.open);
+        return "Accepted";
+      }
       if (s.phase !== "Standby") return rej("valves only in Standby");
       if (!s.valves[arg.id]) return rej("unknown valve");
       s.valves[arg.id].state = arg.open ? "Open" : "Closed";
       if (arg.id === "Mtv") s.valves.Mtv.pos = arg.open ? 90 : 0;
       return "Accepted";
+    case "Stand":
+      if (!STAND) return rej("no test stand configured");
+      return handleStand(arg);
     default:
       return rej("unknown command");
   }
@@ -122,11 +336,13 @@ function handle(kind) {
 wss.on("connection", (ws) => {
   if (s.traj) send(ws, "trajectory", s.traj);
   send(ws, "params", s.params);
+  if (STAND) send(ws, "stand_status", standStatus());
   send(ws, "link", linkStatus());
   for (const e of s.events) send(ws, "event", e);
   ws.on("message", (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
+    if (msg && typeof msg.control === "string") return handleControl(ws, msg);
     const kind = msg?.kind;
     if (kind === undefined || kind === "Heartbeat") return;
     const seq = ++s.upSeq;
@@ -137,6 +353,7 @@ wss.on("connection", (ws) => {
     }
     if (DROP_ACKS) return;
     const result = handle(kind);
+    if (flag("--verbose")) console.log(`#${seq} ${JSON.stringify(kind)} -> ${JSON.stringify(result)}`);
     setTimeout(() => broadcast("ack", { seq, time_s: s.t, result }), 40 + Math.random() * 60);
   });
 });
@@ -277,7 +494,8 @@ function linkStatus() {
   return {
     vehicle_addr: "127.0.0.1:8888", connected: true, last_rx_age_s: 0.01,
     packets_rx: rx, packets_lost: Math.floor(s.t / 40), rate_hz: 50 + noise(0.6),
-    recording: "logs/session-mock.jsonl",
+    recording,
+    stand: STAND ? { addr: STAND_ADDR, connected: true, last_rx_age_s: 0.02 + Math.random() * 0.03 } : null,
   };
 }
 
@@ -289,13 +507,17 @@ setInterval(() => {
   while (ticks < due) {
     ticks++;
     step(0.02);
+    if (STAND) stepStand(0.02);
     rx++;
     broadcast("flight", flightMsg());
   }
 }, 5);
-setInterval(() => broadcast("stand", standMsg()), 50);
+// With a stand on the link the stand's own telemetry replaces the sim's propulsion picture.
+setInterval(() => broadcast("stand", STAND ? standTelemetry() : standMsg()), 50);
+if (STAND) setInterval(() => broadcast("stand_status", standStatus()), 200);
 setInterval(() => broadcast("link", linkStatus()), 500);
 setInterval(() => { if (s.traj && ["Ascent", "Descent"].includes(s.phase)) broadcast("trajectory", { ...s.traj, hover: undefined }); }, 1000);
 
 event("Info", "Mock vehicle started");
-console.log(`mock bridge on ws://127.0.0.1:${PORT}/ws  source=${SOURCE}${AUTO ? "  (auto flight)" : ""}`);
+if (STAND) event("Info", `Mock test stand on ${STAND_ADDR}: Safe, sequences ${Object.keys(SEQUENCES).join(", ")}`);
+console.log(`mock bridge on ws://127.0.0.1:${PORT}/ws  source=${SOURCE}${AUTO ? "  (auto flight)" : ""}${STAND ? "  +stand" : ""}${recording ? `  recording ${recording}` : ""}`);

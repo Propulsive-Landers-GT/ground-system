@@ -9,7 +9,7 @@
 export type Vec3 = [number, number, number];
 export type Quat = [number, number, number, number];
 
-export type Source = "Vehicle" | "Sim" | "Replay";
+export type Source = "Vehicle" | "Sim" | "Replay" | "Stand";
 
 export const FLIGHT_PHASES = ["Standby", "Armed", "Ascent", "Hover", "Descent", "Landed"] as const;
 export type FlightPhase = (typeof FLIGHT_PHASES)[number];
@@ -67,8 +67,13 @@ export interface TrajectoryMsg {
   target: Vec3;
 }
 
-export const STAND_CHANNELS = ["Opt", "Ipt", "Ept", "M1", "M2", "Pupt", "Lfpt", "T1", "T2", "Thrust"] as const;
+export const STAND_CHANNELS = [
+  "Opt", "Ipt", "Ept", "M1", "M2", "Pupt", "Lfpt", "T1", "T2", "Thrust", "NitrousMass", "RcsThrust",
+] as const;
 export type StandChannel = (typeof STAND_CHANNELS)[number];
+
+/** Non-valve discrete outputs on the test stand. */
+export type StandOutput = "Igniter" | "DaqSync";
 
 export const VALVE_IDS = [
   "Omv", "Mtv", "IgV", "OFill", "OIso", "OVnt", "PuMv", "PuFill",
@@ -89,6 +94,32 @@ export interface StandTelemetry {
   source: Source;
   channels: [StandChannel, number][];
   valves: ValveStatus[];
+  /** Discrete outputs that are on. Absent (protocol v1 senders) means none. */
+  outputs_on?: StandOutput[] | null;
+  /** Commanded MTV opening, 0–100 %. Null or absent when the sender has no MTV. */
+  mtv_percent?: number | null;
+}
+
+export type StandMode = "Safe" | "Armed" | "Sequence";
+
+export interface SequenceProgress {
+  name: string;
+  /** Seconds since the sequence's T-0. */
+  t_s: number;
+  duration_s: number;
+  /** Index of the next step to fire and its description. */
+  next_step: [number, string] | null;
+  steps_total: number;
+}
+
+export interface StandStatus {
+  time_s: number;
+  mode: StandMode;
+  actuation_link_ok: boolean;
+  loadcell_link_ok: boolean;
+  /** Sequences the adapter can run, by name. */
+  sequences: string[];
+  sequence: SequenceProgress | null;
 }
 
 export type Severity = "Info" | "Warning" | "Critical";
@@ -145,7 +176,23 @@ export type CommandKind =
   | { SetMpcWeights: MpcWeights | null }
   | { SetControlMode: ControlMode }
   | { Jog: JogSetpoint }
-  | { SetValve: { id: ValveId; open: boolean } };
+  | { SetValve: { id: ValveId; open: boolean } }
+  | { Stand: StandCommand };
+
+/** Test-stand adapter commands; the bridge routes them to the stand endpoint. */
+export type StandCommand =
+  | "Arm"
+  | "Disarm"
+  | "Abort"
+  | { SetMtvPercent: number }
+  | { SetOutput: { id: StandOutput; on: boolean } }
+  | { StartSequence: string };
+
+export interface StandLink {
+  addr: string;
+  connected: boolean;
+  last_rx_age_s: number | null;
+}
 
 export interface LinkStatus {
   vehicle_addr: string;
@@ -155,6 +202,8 @@ export interface LinkStatus {
   packets_lost: number;
   rate_hz: number;
   recording: string | null;
+  /** Null when the bridge was started without --stand. Absent on older bridges. */
+  stand?: StandLink | null;
 }
 
 export interface SentMsg {
@@ -170,11 +219,18 @@ export type ServerMsg =
   | { type: "ack"; data: CommandAck }
   | { type: "params"; data: ParamsMsg }
   | { type: "sent"; data: SentMsg }
-  | { type: "link"; data: LinkStatus };
+  | { type: "stand_status"; data: StandStatus }
+  | { type: "link"; data: LinkStatus }
+  | { type: "error"; data: { message: string } };
 
 export interface ClientMsg {
   kind: CommandKind;
 }
+
+/** Browser → bridge control messages. Handled by the bridge itself, never forwarded, not acked. */
+export type ControlMsg =
+  | { control: "start_recording"; name?: string }
+  | { control: "stop_recording" };
 
 // Limits the vehicle enforces; mirrored here only for display and input clamping.
 export const GIMBAL_LIMIT_RAD = (15 * Math.PI) / 180;
@@ -200,13 +256,23 @@ export const VALVE_ROLE: Record<ValveId, string> = {
 
 export const CHANNEL_LABEL: Record<StandChannel, string> = {
   Opt: "O-PT", Ipt: "I-PT", Ept: "E-PT", M1: "M1-PT", M2: "M2-PT", Pupt: "PU-PT", Lfpt: "LF-PT",
-  T1: "T1", T2: "T2", Thrust: "Thrust",
+  T1: "T1", T2: "T2", Thrust: "Thrust", NitrousMass: "N2O mass", RcsThrust: "RCS thrust",
 };
 
 export const CHANNEL_UNIT: Record<StandChannel, string> = {
   Opt: "bar", Ipt: "bar", Ept: "bar", M1: "bar", M2: "bar", Pupt: "bar", Lfpt: "bar",
-  T1: "°C", T2: "°C", Thrust: "N",
+  T1: "°C", T2: "°C", Thrust: "N", NitrousMass: "kg", RcsThrust: "N",
 };
+
+export const OUTPUT_LABEL: Record<StandOutput, string> = { Igniter: "Igniter", DaqSync: "DAQ sync" };
+
+function describeStand(c: StandCommand): string {
+  if (typeof c === "string") return c === "Abort" ? "Stand abort" : `Stand ${c.toLowerCase()}`;
+  if ("SetMtvPercent" in c) return `MTV ${Math.round(c.SetMtvPercent)} %`;
+  if ("SetOutput" in c) return `${OUTPUT_LABEL[c.SetOutput.id] ?? c.SetOutput.id} ${c.SetOutput.on ? "on" : "off"}`;
+  if ("StartSequence" in c) return `Start sequence ${c.StartSequence}`;
+  return "Stand command";
+}
 
 export function describeCommand(kind: CommandKind): string {
   if (typeof kind === "string") return kind === "RequestParams" ? "Request params" : kind;
@@ -216,9 +282,19 @@ export function describeCommand(kind: CommandKind): string {
   if ("SetControlMode" in kind) return `Control mode ${kind.SetControlMode}`;
   if ("SetValve" in kind) return `${VALVE_LABEL[kind.SetValve.id] ?? kind.SetValve.id} ${kind.SetValve.open ? "open" : "close"}`;
   if ("Jog" in kind) return "Jog";
+  if ("Stand" in kind) return describeStand(kind.Stand);
   return "Command";
+}
+
+/** True when a stand telemetry message reports this discrete output as on. Tolerates v1 senders. */
+export function outputOn(m: StandTelemetry | null, id: StandOutput): boolean {
+  return Array.isArray(m?.outputs_on) && m.outputs_on.includes(id);
 }
 
 export function isJog(kind: CommandKind): boolean {
   return typeof kind === "object" && "Jog" in kind;
+}
+
+export function isStandCommand(kind: CommandKind): boolean {
+  return typeof kind === "object" && "Stand" in kind;
 }
