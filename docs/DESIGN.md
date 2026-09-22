@@ -119,6 +119,32 @@ The bridge generates heartbeats itself; browsers never send them.
 
 ## Recording
 
-Each bridge run writes `logs/session-<utc>.jsonl`, one line per downlink message and per command sent,
-`{ "t": <unix seconds>, "dir": "down" | "up", ... }`. `gs-bridge --replay <file>` plays a session back
-through the same WebSocket API with `source: "Replay"`.
+Recording is operator-controlled, not always-on. The bridge starts idle; any browser can start or stop
+a recording, and everyone sees the state in `link.recording`.
+
+Browser → bridge control messages (distinct from commands, never forwarded to the vehicle):
+
+| message | effect |
+|---|---|
+| `{ "control": "start_recording", "name": "hotfire-3" }` | opens `logs/<utc>-<name>/` (`name` optional, sanitized to `[A-Za-z0-9._-]`) |
+| `{ "control": "stop_recording" }` | flushes and closes it |
+
+Starting while already recording is an `error`; so is stopping when idle. `gs-bridge --record [name]`
+starts one at launch for headless use. The `link.recording` field is the directory path while
+recording, else `null`.
+
+Each recording directory contains, all written incrementally (flushed at least once a second, so a
+crash loses at most a second):
+
+| file | contents |
+|---|---|
+| `flight.csv` | one row per `flight` message: `t_unix, time_s, seq, source, phase, phase_time_s, control_mode, terminated, px, py, pz, vx, vy, vz, qx, qy, qz, qw, wx, wy, wz, mass, gimbal_theta, gimbal_phi, thrust, rcs, tilt_deg, trajectory_deviation_m, position_age_s, link_age_s, imu_ok, gps_ok, uwb_ok, ax, ay, az, gx, gy, gz, chamber_pressure, tank_pressure, truth_px, truth_py, truth_pz, truth_vx, truth_vy, truth_vz, truth_qx, truth_qy, truth_qz, truth_qw` (empty cell for `None`) |
+| `stand.csv` | one row per `stand` message: `t_unix, time_s, source, mtv_percent, igniter, daq_sync`, then one column per `StandChannel` (`Opt, Ipt, Ept, M1, M2, Pupt, Lfpt, T1, T2, Thrust, NitrousMass, RcsThrust`, empty if absent), then one column per `ValveId` with `open/closed/unknown`, then `<valve>_deg` for those reporting a position |
+| `events.csv` | `t_unix, time_s, kind, severity, text` where `kind` is `event`, `sent` (text = seq + command JSON), `ack` (text = seq + result), `stand_status` (mode / sequence transitions only), `recording` (start/stop markers) |
+| `session.jsonl` | everything, one line per message, `{ "t": <unix seconds>, "dir": "down" | "up", ... }`, for exact replay |
+
+`logs/` is gitignored. `gs-bridge --replay <dir or session.jsonl>` plays a recording back through the
+same WebSocket API with `source: "Replay"`.
+
+`gs-stand` additionally keeps its own append-only CSV on the Jetson (`logs/stand-<utc>.csv`) for every
+run regardless of bridge recording, as a local backup of the load-cell data.
