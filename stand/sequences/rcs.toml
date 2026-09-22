@@ -1,0 +1,42 @@
+# RCS thruster test. From `jetson stuff/jetson/mtv/rcs_procedure.py` (pfs_commands).
+# No MTV profile. rcs_procedure.py commanded the MTV to 90 (fully open) at startup with a
+# "TODO: set this to open" comment; that is a manual pre-step here (SetMtvPercent 100 while
+# Armed) if it is wanted at all: the RCS test does not flow through the engine.
+#
+# Needs the rcs load cell set up: set `setup_on_connect = true` for "rcs" in stand/config.toml.
+# The duplicated steps are the legacy dropped-byte workaround, kept for fidelity.
+
+name = "rcs"
+description = "RCS pulse: pressurant iso + main valve open 3.5 s / 4 s, rcs load cell streaming"
+
+[[step]]
+t = 0.0
+action = "loadcell rcs begin"
+
+[[step]]
+t = 0.1
+action = "loadcell rcs begin"
+
+[[step]]
+t = 1.0
+action = "valve puiso open"
+
+[[step]]
+t = 1.5
+action = "valve pumv open"
+
+[[step]]
+t = 4.5
+action = "valve puiso close"
+
+[[step]]
+t = 5.5
+action = "valve pumv close"
+
+[[step]]
+t = 5.6
+action = "loadcell rcs end"
+
+[[step]]
+t = 5.7
+action = "loadcell rcs end"

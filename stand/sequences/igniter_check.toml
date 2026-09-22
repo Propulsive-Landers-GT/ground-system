@@ -1,0 +1,70 @@
+# Igniter check ("kaboom test"). From `jetson stuff/jetson/mtv/kaboom_test.py`. Like
+# coldflow.py that script is broken as written (MTV_Profile import, profile "100-2.8" without
+# "hold-"); the list and times are ported, profile read as "hold-100-2.8" at 1.2 + 0.5 = 1.7 s
+# (ends at 4.5 s).
+#
+# This is a short burn, not just an igniter click: OMV opens at T+0 and the MTV goes to 100 %
+# at T+1.7 with the igniter on. Then a pressurant purge (PUISO/PUMV) from 5.6 to 8.7.
+#
+# !! ADDED STEP: the legacy list never sends `kaboom end`, so the igniter line stayed
+# energised after the test until somebody typed it or ran `reset all`. `output igniter off`
+# at T+4.6 (right after the burn ends with `igv close`) is NOT in kaboom_test.py. Remove it if
+# the igniter is meant to stay on; Abort/Disarm turn it off regardless.
+
+name = "igniter_check"
+description = "Igniter check: OMV open, IGV + igniter at 1.0/1.2 s, MTV 100 % 1.7-4.5 s, then purge"
+
+[mtv_profile]
+start_t = 1.7
+profile = "hold-100-2.8"
+preposition = true
+
+[[step]]
+t = 0.0
+action = "valve omv open"
+
+[[step]]
+t = 0.1
+action = "valve omv open"
+
+[[step]]
+t = 1.0
+action = "valve igv open"
+
+[[step]]
+t = 1.2
+action = "output igniter on"
+
+# ---- MTV profile runs 1.7 .. 4.5 ----
+
+[[step]]
+t = 4.5
+action = "valve igv close"
+
+[[step]]
+t = 4.6
+action = "output igniter off"      # ADDED, see header
+
+[[step]]
+t = 5.5
+action = "valve omv close"
+
+[[step]]
+t = 5.6
+action = "valve puiso open"
+
+[[step]]
+t = 5.7
+action = "valve pumv open"
+
+[[step]]
+t = 7.7
+action = "valve puiso close"
+
+[[step]]
+t = 8.7
+action = "valve pumv close"
+
+[[step]]
+t = 8.8
+action = "valve pumv close"
