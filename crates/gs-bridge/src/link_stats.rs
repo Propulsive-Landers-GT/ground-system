@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::messages::LinkStatus;
+use crate::messages::{LinkStatus, StandLinkStatus};
 
 /// `connected` means a packet arrived within this window.
 const CONNECTED_WINDOW: Duration = Duration::from_secs(1);
@@ -55,21 +55,38 @@ impl LinkStats {
             .is_some_and(|t| now.duration_since(t) <= CONNECTED_WINDOW)
     }
 
+    pub fn last_rx_age_s(&self, now: Instant) -> Option<f64> {
+        self.last_rx.map(|t| now.duration_since(t).as_secs_f64())
+    }
+
+    /// The vehicle's `link` message. `stand` is the second endpoint's health, if configured.
     pub fn status(
         &mut self,
         now: Instant,
         vehicle_addr: String,
         recording: Option<String>,
+        stand: Option<StandLinkStatus>,
     ) -> LinkStatus {
         self.trim_arrivals(now);
         LinkStatus {
             vehicle_addr,
             connected: self.connected(now),
-            last_rx_age_s: self.last_rx.map(|t| now.duration_since(t).as_secs_f64()),
+            last_rx_age_s: self.last_rx_age_s(now),
             packets_rx: self.packets_rx,
             packets_lost: self.packets_lost,
             rate_hz: self.flight_arrivals.len() as f64 / RATE_WINDOW.as_secs_f64(),
             recording,
+            stand,
+        }
+    }
+
+    /// The test stand's part of the `link` message. Only [`Self::on_packet`] feeds it:
+    /// stand packets carry no sequence number, so there is no loss or rate to report.
+    pub fn stand_status(&self, now: Instant, addr: String) -> StandLinkStatus {
+        StandLinkStatus {
+            addr,
+            connected: self.connected(now),
+            last_rx_age_s: self.last_rx_age_s(now),
         }
     }
 
@@ -96,7 +113,7 @@ mod tests {
     }
 
     fn lost(stats: &mut LinkStats, now: Instant) -> u64 {
-        stats.status(now, String::new(), None).packets_lost
+        stats.status(now, String::new(), None, None).packets_lost
     }
 
     #[test]
@@ -141,13 +158,13 @@ mod tests {
             stats.on_flight_seq(i, now);
         }
         let end = start + Duration::from_millis(1990);
-        let status = stats.status(end, "v".into(), None);
+        let status = stats.status(end, "v".into(), None, None);
         assert!(status.connected);
         assert!((status.rate_hz - 50.0).abs() <= 1.0, "{}", status.rate_hz);
         assert_eq!(status.packets_rx, 100);
 
         let later = end + Duration::from_secs(3);
-        let status = stats.status(later, "v".into(), None);
+        let status = stats.status(later, "v".into(), None, None);
         assert!(!status.connected);
         assert_eq!(status.rate_hz, 0.0);
         assert!(status.last_rx_age_s.unwrap() > 2.9);

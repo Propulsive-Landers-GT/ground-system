@@ -23,6 +23,7 @@ pub struct Hub {
 struct Cache {
     trajectory: Option<Utf8Bytes>,
     params: Option<Utf8Bytes>,
+    stand_status: Option<Utf8Bytes>,
     link: Option<Utf8Bytes>,
     events: VecDeque<Utf8Bytes>,
 }
@@ -45,6 +46,7 @@ impl Hub {
             match message {
                 ServerMessage::Trajectory(_) => cache.trajectory = Some(json.clone()),
                 ServerMessage::Params(_) => cache.params = Some(json.clone()),
+                ServerMessage::StandStatus(_) => cache.stand_status = Some(json.clone()),
                 ServerMessage::Link(_) => cache.link = Some(json.clone()),
                 ServerMessage::Event(_) => {
                     if cache.events.len() == EVENT_HISTORY {
@@ -69,6 +71,7 @@ impl Hub {
             .trajectory
             .iter()
             .chain(&cache.params)
+            .chain(&cache.stand_status)
             .chain(&cache.link)
             .chain(&cache.events)
             .cloned()
@@ -93,6 +96,31 @@ mod tests {
             severity: Severity::Info,
             text: format!("event {i}"),
         })
+    }
+
+    #[test]
+    fn new_clients_get_the_latest_stand_status() {
+        use gs_protocol::{StandMode, StandStatus};
+        let status = |mode| {
+            ServerMessage::StandStatus(StandStatus {
+                time_s: 0.0,
+                mode,
+                actuation_link_ok: true,
+                loadcell_link_ok: true,
+                sequences: vec!["hotfire".into()],
+                sequence: None,
+            })
+        };
+        let hub = Hub::new();
+        hub.publish(&status(StandMode::Safe));
+        hub.publish(&status(StandMode::Armed));
+        hub.publish(&event(1));
+
+        let (snapshot, _rx) = hub.join();
+        assert_eq!(snapshot.len(), 2);
+        assert!(snapshot[0].as_str().contains(r#""type":"stand_status""#));
+        assert!(snapshot[0].as_str().contains(r#""mode":"Armed""#));
+        assert!(snapshot[1].as_str().contains("event 1"));
     }
 
     #[test]

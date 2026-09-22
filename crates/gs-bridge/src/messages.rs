@@ -1,8 +1,8 @@
 //! JSON shapes of the WebSocket API and the session log. See `docs/DESIGN.md`.
 
-use gs_protocol::{StandStatus, 
+use gs_protocol::{
     CommandAck, CommandKind, Downlink, EventMsg, FlightTelemetry, ParamsMsg, Source,
-    StandTelemetry, TrajectoryMsg,
+    StandStatus, StandTelemetry, TrajectoryMsg,
 };
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +75,17 @@ pub struct LinkStatus {
     pub rate_hz: f64,
     /// Path of the session log being written, if any.
     pub recording: Option<String>,
+    /// The test-stand endpoint; `None` when the bridge was started without `--stand`.
+    pub stand: Option<StandLinkStatus>,
+}
+
+/// Link health of the test-stand endpoint. Loss and rate are not tracked: only
+/// `FlightTelemetry` carries a sequence number, and that comes from the vehicle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StandLinkStatus {
+    pub addr: String,
+    pub connected: bool,
+    pub last_rx_age_s: Option<f64>,
 }
 
 /// Browser -> bridge: `{ "kind": CommandKind }`. The bridge assigns the sequence number.
@@ -82,6 +93,41 @@ pub struct LinkStatus {
 #[serde(deny_unknown_fields)]
 pub struct ClientCommand {
     pub kind: CommandKind,
+}
+
+/// Browser -> bridge: `{ "control": "...", ... }`. Handled by the bridge itself, never
+/// forwarded over UDP.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(tag = "control", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ControlMessage {
+    StartRecording {
+        #[serde(default)]
+        name: Option<String>,
+    },
+    StopRecording,
+}
+
+/// Anything a browser may send. Told apart by the presence of a `control` key.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClientMessage {
+    Command(CommandKind),
+    Control(ControlMessage),
+}
+
+impl ClientMessage {
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let value: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| format!("invalid message: {e}"))?;
+        if value.get("control").is_some() {
+            serde_json::from_value::<ControlMessage>(value)
+                .map(Self::Control)
+                .map_err(|e| format!("invalid control message: {e}"))
+        } else {
+            serde_json::from_value::<ClientCommand>(value)
+                .map(|c| Self::Command(c.kind))
+                .map_err(|e| format!("invalid command: {e}"))
+        }
+    }
 }
 
 /// One line of a session log: `{ "t": <unix s>, "dir": "down", "type", "data" }` or
@@ -220,6 +266,14 @@ pub(crate) mod tests {
             json!({"type": "sent", "data": {"seq": 9, "kind": "Arm"}})
         );
 
+        assert_eq!(
+            to_value(&ServerMessage::error("bad")),
+            json!({"type": "error", "data": {"message": "bad"}})
+        );
+    }
+
+    #[test]
+    fn link_json_shape_without_stand() {
         let link = ServerMessage::Link(LinkStatus {
             vehicle_addr: "127.0.0.1:8888".into(),
             connected: false,
@@ -228,19 +282,116 @@ pub(crate) mod tests {
             packets_lost: 0,
             rate_hz: 0.0,
             recording: None,
+            stand: None,
         });
         assert_eq!(
             to_value(&link),
             json!({"type": "link", "data": {
                 "vehicle_addr": "127.0.0.1:8888", "connected": false, "last_rx_age_s": null,
-                "packets_rx": 0, "packets_lost": 0, "rate_hz": 0.0, "recording": null
+                "packets_rx": 0, "packets_lost": 0, "rate_hz": 0.0, "recording": null,
+                "stand": null
             }})
         );
+    }
 
+    #[test]
+    fn link_json_shape_with_stand() {
+        let link = ServerMessage::Link(LinkStatus {
+            vehicle_addr: "127.0.0.1:8888".into(),
+            connected: true,
+            last_rx_age_s: Some(0.02),
+            packets_rx: 10,
+            packets_lost: 1,
+            rate_hz: 50.0,
+            recording: Some("logs/session.jsonl".into()),
+            stand: Some(StandLinkStatus {
+                addr: "127.0.0.1:8889".into(),
+                connected: true,
+                last_rx_age_s: Some(0.05),
+            }),
+        });
         assert_eq!(
-            to_value(&ServerMessage::error("bad")),
-            json!({"type": "error", "data": {"message": "bad"}})
+            to_value(&link),
+            json!({"type": "link", "data": {
+                "vehicle_addr": "127.0.0.1:8888", "connected": true, "last_rx_age_s": 0.02,
+                "packets_rx": 10, "packets_lost": 1, "rate_hz": 50.0,
+                "recording": "logs/session.jsonl",
+                "stand": { "addr": "127.0.0.1:8889", "connected": true, "last_rx_age_s": 0.05 }
+            }})
         );
+    }
+
+    #[test]
+    fn stand_status_json_shape() {
+        let status = ServerMessage::StandStatus(StandStatus {
+            time_s: 3.0,
+            mode: gs_protocol::StandMode::Sequence,
+            actuation_link_ok: true,
+            loadcell_link_ok: false,
+            sequences: vec!["hotfire".into()],
+            sequence: Some(gs_protocol::SequenceProgress {
+                name: "hotfire".into(),
+                t_s: 1.5,
+                duration_s: 20.0,
+                next_step: Some((2, "OMV open".into())),
+                steps_total: 9,
+            }),
+        });
+        assert_eq!(
+            to_value(&status),
+            json!({"type": "stand_status", "data": {
+                "time_s": 3.0, "mode": "Sequence",
+                "actuation_link_ok": true, "loadcell_link_ok": false,
+                "sequences": ["hotfire"],
+                "sequence": {
+                    "name": "hotfire", "t_s": 1.5, "duration_s": 20.0,
+                    "next_step": [2, "OMV open"], "steps_total": 9
+                }
+            }})
+        );
+    }
+
+    #[test]
+    fn replay_rewrites_stand_source_too() {
+        let down = LogRecord::Down {
+            t: 1.0,
+            message: ServerMessage::Stand(StandTelemetry {
+                time_s: 1.0,
+                source: Source::Stand,
+                channels: vec![(gs_protocol::StandChannel::Thrust, 5.0)],
+                valves: Vec::new(),
+                outputs_on: vec![gs_protocol::StandOutput::DaqSync],
+                mtv_percent: Some(40.0),
+            }),
+        };
+        let line = serde_json::to_string(&down).unwrap();
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["type"], "stand");
+        assert_eq!(v["data"]["source"], "Stand");
+        assert_eq!(v["data"]["outputs_on"], json!(["DaqSync"]));
+
+        let parsed: LogRecord = serde_json::from_str(&line).unwrap();
+        match parsed.into_server_message() {
+            ServerMessage::Stand(s) => assert_eq!(s.source, Source::Replay),
+            other => panic!("unexpected {other:?}"),
+        }
+
+        // StandStatus has no source field; it must survive the log unchanged.
+        let status = ServerMessage::StandStatus(StandStatus {
+            time_s: 2.0,
+            mode: gs_protocol::StandMode::Safe,
+            actuation_link_ok: true,
+            loadcell_link_ok: true,
+            sequences: Vec::new(),
+            sequence: None,
+        });
+        let line = serde_json::to_string(&LogRecord::Down {
+            t: 2.0,
+            message: status.clone(),
+        })
+        .unwrap();
+        let parsed: LogRecord = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed.into_server_message(), status);
     }
 
     #[test]
@@ -276,6 +427,35 @@ pub(crate) mod tests {
 
         assert!(parse(r#"{"kind":"Explode"}"#).is_err());
         assert!(parse("not json").is_err());
+    }
+
+    #[test]
+    fn parses_control_messages_apart_from_commands() {
+        assert_eq!(
+            ClientMessage::parse(r#"{"control":"start_recording","name":"hotfire-3"}"#).unwrap(),
+            ClientMessage::Control(ControlMessage::StartRecording {
+                name: Some("hotfire-3".into())
+            })
+        );
+        assert_eq!(
+            ClientMessage::parse(r#"{"control":"start_recording"}"#).unwrap(),
+            ClientMessage::Control(ControlMessage::StartRecording { name: None })
+        );
+        assert_eq!(
+            ClientMessage::parse(r#"{"control":"stop_recording"}"#).unwrap(),
+            ClientMessage::Control(ControlMessage::StopRecording)
+        );
+        assert_eq!(
+            ClientMessage::parse(r#"{"kind":{"Stand":"Arm"}}"#).unwrap(),
+            ClientMessage::Command(CommandKind::Stand(gs_protocol::StandCommand::Arm))
+        );
+
+        let err = ClientMessage::parse(r#"{"control":"self_destruct"}"#).unwrap_err();
+        assert!(err.starts_with("invalid control message"), "{err}");
+        let err = ClientMessage::parse(r#"{"control":"start_recording","name":7}"#).unwrap_err();
+        assert!(err.starts_with("invalid control message"), "{err}");
+        let err = ClientMessage::parse(r#"{"nope":1}"#).unwrap_err();
+        assert!(err.starts_with("invalid command"), "{err}");
     }
 
     #[test]

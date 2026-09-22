@@ -21,12 +21,18 @@ pub struct Replay {
 }
 
 impl Replay {
-    /// Loads the whole file up front so a bad path or format fails at startup.
+    /// Loads the whole file up front so a bad path or format fails at startup. `path`
+    /// is a recording directory or its `session.jsonl`.
     pub fn load(path: &Path, speed: f64) -> anyhow::Result<Self> {
         if !(speed.is_finite() && speed > 0.0) {
             bail!("--replay-speed must be a positive number");
         }
-        let text = std::fs::read_to_string(path)
+        let path = if path.is_dir() {
+            path.join("session.jsonl")
+        } else {
+            path.to_path_buf()
+        };
+        let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading replay file {}", path.display()))?;
         let (records, skipped) = parse_records(&text);
         if records.is_empty() {
@@ -36,7 +42,7 @@ impl Replay {
             warn!("replay: skipped {skipped} unreadable lines");
         }
         Ok(Self {
-            path: path.to_path_buf(),
+            path,
             records,
             speed,
         })
@@ -53,6 +59,8 @@ impl Replay {
         );
 
         let mut stats = LinkStats::default();
+        // Appears in `link` once the recording turns out to contain a test stand.
+        let mut stand_stats: Option<LinkStats> = None;
         let mut tick = interval(Duration::from_secs_f64(1.0 / HEARTBEAT_HZ));
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let started = tokio::time::Instant::now();
@@ -66,18 +74,29 @@ impl Replay {
             });
             tokio::select! {
                 _ = tick.tick() => {
-                    let status = stats.status(Instant::now(), label.clone(), None);
+                    let now = Instant::now();
+                    let stand = stand_stats
+                        .as_ref()
+                        .map(|s| s.stand_status(now, label.clone()));
+                    let status = stats.status(now, label.clone(), None, stand);
                     hub.publish(&ServerMessage::Link(status));
                 }
                 _ = sleep_until(next_due.unwrap_or(started)), if next_due.is_some() => {
                     let Some(record) = records.next() else { continue };
                     let now = Instant::now();
                     let message = record.into_server_message();
-                    if !matches!(message, ServerMessage::Sent(_)) {
-                        stats.on_packet(now);
-                    }
-                    if let ServerMessage::Flight(flight) = &message {
-                        stats.on_flight_seq(flight.seq, now);
+                    match &message {
+                        ServerMessage::Sent(_) => {}
+                        // Only the stand sends these; `source` was rewritten to Replay
+                        // already, so the message type is what tells the two apart.
+                        ServerMessage::StandStatus(_) => {
+                            stand_stats.get_or_insert_default().on_packet(now);
+                        }
+                        ServerMessage::Flight(flight) => {
+                            stats.on_packet(now);
+                            stats.on_flight_seq(flight.seq, now);
+                        }
+                        _ => stats.on_packet(now),
                     }
                     hub.publish(&message);
                     if records.peek().is_none() {

@@ -6,6 +6,7 @@ mod live;
 mod messages;
 mod recorder;
 mod replay;
+mod routing;
 mod web;
 
 use std::io::IsTerminal;
@@ -23,13 +24,19 @@ use crate::hub::Hub;
 use crate::live::LiveLink;
 use crate::recorder::Recorder;
 use crate::replay::Replay;
+use crate::routing::Endpoints;
+use crate::web::LinkHandle;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "GTPL ground-station bridge")]
 struct Args {
-    /// Address of the vehicle or sim that heartbeats and commands are sent to.
+    /// Address of the vehicle or sim that heartbeats and flight commands are sent to.
     #[arg(long, value_name = "IP:PORT", default_value = "127.0.0.1:8888")]
     vehicle: SocketAddr,
+
+    /// Address of the test-stand adapter (gs-stand). Stand and valve commands go here.
+    #[arg(long, value_name = "IP:PORT")]
+    stand: Option<SocketAddr>,
 
     /// UDP port telemetry is received on.
     #[arg(long, value_name = "PORT", default_value_t = gs_protocol::DEFAULT_GROUND_PORT)]
@@ -43,16 +50,18 @@ struct Args {
     #[arg(long, value_name = "PATH", default_value = "web/dist")]
     web_dir: PathBuf,
 
-    /// Directory session logs are written to.
+    /// Directory recordings are written to (one subdirectory per recording).
     #[arg(long, value_name = "PATH", default_value = "logs")]
     log_dir: PathBuf,
 
-    /// Do not write a session log.
-    #[arg(long)]
-    no_record: bool,
+    /// Start a recording at launch, optionally named. Otherwise recording is started
+    /// from the browser.
+    #[arg(long, value_name = "NAME", num_args = 0..=1, default_missing_value = "")]
+    record: Option<String>,
 
-    /// Play back a recorded session instead of talking to a vehicle.
-    #[arg(long, value_name = "FILE.jsonl")]
+    /// Play back a recording (its directory or `session.jsonl`) instead of talking to
+    /// a vehicle.
+    #[arg(long, value_name = "DIR|FILE.jsonl")]
     replay: Option<PathBuf>,
 
     /// Playback speed multiplier.
@@ -75,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("binding HTTP port {}", args.http))?;
 
-    let commands = match &args.replay {
+    let link = match &args.replay {
         Some(path) => {
             let replay = Replay::load(path, args.replay_speed)?;
             tokio::spawn(replay.run(hub.clone()));
@@ -94,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = web::router(web::AppState {
         hub,
-        commands,
+        link,
         web_dir: args.web_dir,
     });
     axum::serve(listener, app)
@@ -102,36 +111,53 @@ async fn main() -> anyhow::Result<()> {
         .context("HTTP server failed")
 }
 
-/// Binds the ground UDP port and spawns the link task. Returns the command queue into it.
-async fn start_live_link(
-    args: &Args,
-    hub: Arc<Hub>,
-) -> anyhow::Result<mpsc::Sender<gs_protocol::CommandKind>> {
+/// Binds the ground UDP port and spawns the link task. Returns the handle browsers use
+/// to reach it.
+async fn start_live_link(args: &Args, hub: Arc<Hub>) -> anyhow::Result<LinkHandle> {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, args.listen_udp))
         .await
         .with_context(|| format!("binding UDP port {}", args.listen_udp))?;
-    info!(
-        "listening for telemetry on UDP {}, heartbeating vehicle at {}",
-        args.listen_udp, args.vehicle
-    );
-
-    let recorder = if args.no_record {
-        None
+    let endpoints = Endpoints {
+        vehicle: args.vehicle,
+        stand: args.stand,
+    };
+    if let Some(stand) = args.stand {
+        if stand == args.vehicle {
+            anyhow::bail!("--stand and --vehicle must be different addresses");
+        }
+        info!(
+            "listening for telemetry on UDP {}, heartbeating vehicle at {} and test stand at {stand}",
+            args.listen_udp, args.vehicle
+        );
     } else {
-        let recorder = Recorder::create(&args.log_dir)
-            .with_context(|| format!("creating session log in {}", args.log_dir.display()))?;
-        info!("recording to {}", recorder.active_path().unwrap_or_default());
-        Some(recorder)
+        info!(
+            "listening for telemetry on UDP {}, heartbeating vehicle at {} (no test stand)",
+            args.listen_udp, args.vehicle
+        );
+    }
+
+    let recorder = match &args.record {
+        Some(name) => {
+            let recorder = Recorder::start(&args.log_dir, Some(name))
+                .with_context(|| format!("creating recording in {}", args.log_dir.display()))?;
+            info!("recording to {}", recorder.dir().display());
+            Some(recorder)
+        }
+        None => {
+            info!("not recording; start one from the UI or with --record");
+            None
+        }
     };
 
-    let (commands_tx, commands) = mpsc::channel(64);
+    let (tx, requests) = mpsc::channel(64);
     let link = LiveLink {
         socket,
-        vehicle_addr: args.vehicle,
+        endpoints,
         hub,
+        log_dir: args.log_dir.clone(),
         recorder,
-        commands,
+        requests,
     };
     tokio::spawn(link.run());
-    Ok(commands_tx)
+    Ok(LinkHandle { endpoints, tx })
 }
