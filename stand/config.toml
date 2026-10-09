@@ -1,0 +1,151 @@
+# gs-stand configuration. Every value here has a built-in default equal to what is written,
+# so deleting a line changes nothing. Sources are the legacy files under `jetson stuff/`.
+#
+# Run:  gs-stand --config stand/config.toml       (from the repo root)
+# Check: gs-stand --check                         (parses this file and every sequence)
+
+[udp]
+# The vehicle/sim binds 8888 (gs-protocol DEFAULT_VEHICLE_PORT). The stand takes 8889 so both
+# can run on one host; point the bridge at it with `gs-bridge --stand <jetson-ip>:8889`.
+port = 8889
+
+[serial]
+# "auto" scans /dev/ttyACM*, /dev/stand-* and /dev/cu.usbmodem*. Explicit paths are fine too,
+# e.g. "/dev/stand-actuation" with the udev rule from crates/gs-stand/README.md. Either way the
+# role is confirmed by behaviour: only the actuation sketch answers `sync status`. If the two
+# boards come up swapped, gs-stand uses them correctly and logs a warning.
+actuation_port = "auto"        # legacy: /dev/ttyACM0 (procedure.py)
+loadcell_port = "auto"         # legacy: /dev/ttyACM1
+baud = 115200                  # test_stand.ino Serial.begin(115200)
+# The sketch frames a command by 10 ms of silence (Serial.setTimeout(10) + readString()) and
+# then drains its input buffer, so two commands closer than that merge into garbage. The legacy
+# scripts worked around this by sending critical commands twice; we space them instead.
+min_command_gap_ms = 30
+connect_timeout_s = 4.0        # wait for "connected" after the DTR reset
+probe_timeout_s = 1.5          # wait for "SYNC is N" after the identifying "sync status"
+loadcell_setup_timeout_s = 6.0 # wait for "<name> loadcell ready" (HX711 begin + tare)
+reconnect_interval_s = 2.0
+# Liveness: an idle "sync status" every second; three misses = link down. Never sent while a
+# sequence runs so a probe can never delay a step.
+probe_interval_s = 1.0
+probe_during_sequence = false
+probe_misses_for_loss = 3
+
+[loadcells]
+stale_after_s = 2.0            # drop a channel from telemetry after this long without a sample
+# The sketch's HX711 calibrations are set_scale(1300) engine, 2120 nitrous, 7550 rcs. The
+# units they produce were never written down; the CSV logs the raw value * scale + offset, so
+# once calibrated put the conversion to N / kg here. Only cells with setup_on_connect are
+# initialised: the sketch blocks FOREVER in `<name> setup` if that HX711 is not wired.
+[[loadcells.cell]]
+name = "engine"                # Arduino device name
+channel = "Thrust"             # gs_protocol::StandChannel
+scale = 1.0
+offset = 0.0
+setup_on_connect = true        # hotfire.py sets up engine + nitrous
+
+[[loadcells.cell]]
+name = "nitrous"
+channel = "NitrousMass"
+scale = 1.0
+offset = 0.0
+setup_on_connect = true
+
+[[loadcells.cell]]
+name = "rcs"
+channel = "RcsThrust"
+scale = 1.0
+offset = 0.0
+setup_on_connect = false       # rcs_procedure.py sets this one up instead; enable for RCS tests
+
+[valves]
+oiso_travel_s = 21.0           # hotfire.txt: "open OISO, wait 21 seconds"; reported Unknown meanwhile
+# De-energized (fail) state per valve, from test_stand.ino: "only ovent and puvent have
+# HIGH == closed"; everything else HIGH == open. OISO is a motorized ball valve driven by two
+# pins and simply stops where it is when both are LOW. Informational.
+[valves.fail_state]
+omv = "closed"
+igv = "closed"
+ofill = "closed"
+pumv = "closed"
+pufill = "closed"
+puiso = "closed"
+lfvnt = "closed"
+ovnt = "open"
+puvnt = "open"
+oiso = "holds"
+
+[safing]
+# docs/DESIGN.md: OMV, IGV, OFILL, PUMV, PUISO, PUFILL closed; igniter off; MTV 0 %; vents
+# (OVENT, PUVENT, LFVENT) opened. The sketch's `reset all` does exactly that except LFVENT
+# (it leaves LFVENT LOW = closed), so it is sent first as one atomic command and the explicit
+# list follows. Note the legacy "exit" path only closed OFILL and IGV (`shutdown begin`).
+use_reset_all = true
+# Do NOT drive anything when the actuation board (re)connects. Opening the port resets the
+# Arduino, whose setup() puts OVENT/PUVENT HIGH (CLOSED) and drives OISO closed; running the
+# safing list here would then reopen the vents, and a software restart on a pressurised stand
+# should not do that on its own. Disarm in Safe mode runs the list explicitly.
+on_connect = false
+steps = [
+  "output igniter off",
+  "valve omv close",
+  "valve igv close",
+  "valve ofill close",
+  "valve pumv close",
+  "valve puiso close",
+  "valve pufill close",
+  "mtv 0",
+  "valve ovnt open",
+  "valve puvnt open",
+  "valve lfvnt open",
+]
+
+[ground_link]
+# The bridge heartbeats at 2 Hz. After this long without any uplink packet:
+timeout_s = 3.0
+armed_on_loss = "safe"         # "safe": run the safing list and go Safe. "log": warn only.
+sequence_on_loss = "log"       # "log": Critical event, sequence continues (a hotfire must not be
+                               # killed by WiFi). "abort": treat like Abort.
+
+[mtv]
+# "auto" = python on Linux (Jetson), none elsewhere. "sysfs" drives /sys/class/pwm directly.
+backend = "auto"
+# mtv_module.py MTV(close_angle=44, gear_ratio=2, servo_range=355), mtv_servo.py
+# Servo(hz=333, low=500, high=2500), procedure.py percent_to_angle(angle_limit=90):
+#   valve_deg  = percent / 100 * 90
+#   servo_deg  = (44 + valve_deg) * 2        (+ servo2_offset on the second servo)
+#   pulse_us   = 500 + 2000 * clip(servo_deg, 0, 355) / 355
+# So 0 % = 88° servo = 996 us, 100 % = 268° servo = 2010 us, at 333 Hz (3003 us period).
+close_angle_deg = 44.0
+gear_ratio = 2.0
+servo_range_deg = 355.0
+pwm_hz = 333.0
+pulse_min_us = 500.0
+pulse_max_us = 2500.0
+full_open_deg = 90.0
+servo2_offset_deg = 0.0        # every legacy script passes servo2_offset=0
+# Startup re-home, as procedure.py: command(-40) [past the closed stop], wait 3 s, then closed.
+home_valve_deg = -40.0
+home_hold_s = 3.0
+
+[mtv.sysfs]
+# /sys/class/pwm/pwmchip<chip>/pwm<channel>. Orin Nano BOARD pin 15 and 33 map to different
+# PWM controllers depending on carrier board and pinmux; the values below are a guess for a
+# stock Orin Nano devkit (pin 15 -> 3280000.pwm, pin 33 -> 32a0000.pwm). Verify with:
+#   for c in /sys/class/pwm/pwmchip*; do echo "$c -> $(readlink -f $c/device)"; done
+# and Jetson.GPIO's gpio_pin_data.py (JETSON_ORIN_NANO table, "pwm chip dir" column).
+servo1 = { chip = 3, channel = 0 }   # BOARD pin 15
+servo2 = { chip = 1, channel = 0 }   # BOARD pin 33
+
+[mtv.python]
+python = "python3"
+helper = "stand/mtv_helper.py"               # repo-relative
+legacy_dir = "jetson stuff/jetson/mtv"       # where mtv_module.py / mtv_servo.py live
+pin1 = 15                                    # Procedure(pin1=15, pin2=33), BOARD numbering
+pin2 = 33
+
+[logging]
+dir = "logs"                   # logs/stand-<utc>.csv per run, append-only, never overwritten
+
+[sequences]
+dir = "stand/sequences"

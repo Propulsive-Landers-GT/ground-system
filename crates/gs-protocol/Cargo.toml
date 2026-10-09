@@ -1,0 +1,17 @@
+[package]
+name = "gs-protocol"
+description = "GTPL ground-station wire protocol: telemetry downlink and command uplink"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+# `std` adds the UDP `VehicleLink` helper used by flight software and the sim.
+# Without it the crate is `no_std + alloc` so a microcontroller can share the types.
+std = ["serde/std", "postcard/use-std"]
+
+[dependencies]
+serde = { workspace = true, features = ["alloc"] }
+postcard = { workspace = true, features = ["alloc"] }

@@ -1,0 +1,174 @@
+/* Design tokens. Shares the gtpl website's system (Montserrat, near-black/navy surfaces, GT gold) so the
+   console reads as the same team's product. Gold means brand/active only; ok/caution/warn stay green/orange/red
+   so a state colour is never mistaken for chrome. Montserrat digits are proportional: every live number needs tnum.
+
+   Type scale (px). Body copy is 13, labels never go below 11, primary readouts are 28 and 40.
+   Spacing is a 4 px scale; the gap between groups is at least twice the gap within a group. */
+
+:root {
+  --font-ui: "Montserrat", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Same family for numbers; app.css turns on tabular figures wherever values update. */
+  --font-num: "Montserrat", system-ui, sans-serif;
+  /* System mono only for seq ids and log timestamps. */
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13px;
+  --fs-lg: 15px;
+  --fs-xl: 20px;
+  --fs-2xl: 28px;
+  --fs-3xl: 40px;
+
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 20px;
+  --sp-7: 24px;
+  --sp-8: 32px;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+  --pill: 999px;
+  --eyebrow-track: 0.14em;
+
+  /* Brand constants, identical in both themes */
+  --gold: #ffd600;
+  --on-gold: #111827;
+  --navy: #1e3a5f;
+  --navy-alt: #2c4b7a;
+  --rail-w: 316px;
+  --header-h: 50px;
+
+  /* Motion. Purposeful only: disclosure, phase change, hold fill. Reduced motion zeroes these in app.css. */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+}
+
+/* The header is the website's near-black nav bar in both themes, so it carries its own copy of the dark chrome. */
+:root,
+:root[data-theme="dark"],
+:root[data-theme="light"] .statusbar {
+  --panel: #0a1526;
+  --panel-2: #111f36;
+  --inset: #050a14;
+  --line: rgba(255, 255, 255, 0.1);
+  --line-strong: rgba(255, 255, 255, 0.32);
+  --text: #ffffff;
+  --text-2: #c9ced6;
+  --text-3: #93999f;
+
+  --accent: #ffd600;
+  --accent-fg: #111827;
+  --accent-bg: rgba(255, 214, 0, 0.14);
+  --select: #2c4b7a;
+  --select-fg: #ffffff;
+  --select-line: #5f86c2;
+  --focus: #ffd600;
+
+  --ok: #3fcf82;
+  --ok-bg: #0d2f1d;
+  --caution: #ff8a1f;
+  --caution-bg: #3d1f06;
+  --on-caution: #1a0d00;
+  --warn: #ff5a5f;
+  --warn-bg: #481216;
+  --warn-solid: #c9302a;
+  --info: #8fb8f2;
+  --info-bg: #12233b;
+}
+
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #050912;
+  --header-bg: rgba(4, 5, 6, 0.86);
+
+  --valve-open: #2fb36b;
+  --valve-closed: #e0453d;
+  --valve-unknown: #7c8794;
+
+  /* Plot / scene series: a 4-slot categorical palette validated with the dataviz checks (lightness band,
+     chroma floor, CVD and normal-vision separation, 3:1 on the panel surface) in this order. No plot draws
+     more than four series. Kept off the state red/orange/green; gold is the dashed reference only. */
+  --s1: #3a86ee;
+  --s2: #889a36;
+  --s3: #ae64f0;
+  --s4: #1fa48a;
+  --s-ref: #ffd600;
+  --s-truth: #9aa3af;
+  --plot-grid: rgba(255, 255, 255, 0.07);
+
+  --scene-bg: #060c16;
+  --scene-grid: #121c2b;
+  --scene-grid-strong: #2a3a52;
+  --scene-body: #d9dde3;
+  --scene-accent: #ffd600;
+  --scene-dark: #2b3340;
+  --scene-metal: #59626e;
+  --scene-plume: #ffb347;
+
+  --pipe: #5d6879;
+  --pipe-live: #c9ced6;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #efece4;
+  --header-bg: rgba(4, 5, 6, 0.94);
+  --panel: #fbfcfd;
+  --panel-2: #f1f3f6;
+  --inset: #e9ecf0;
+  --line: rgba(17, 24, 39, 0.12);
+  --line-strong: rgba(17, 24, 39, 0.44);
+  --text: #111827;
+  --text-2: #4b5563;
+  --text-3: #5f6673;
+
+  /* Gold fails contrast as text or a thin stroke on cream/white, so navy is the active colour here. */
+  --accent: #1e3a5f;
+  --accent-fg: #ffffff;
+  --accent-bg: rgba(30, 58, 95, 0.12);
+  --select: #1e3a5f;
+  --select-fg: #ffffff;
+  --select-line: #1e3a5f;
+  --focus: #1e3a5f;
+
+  --ok: #14713a;
+  --ok-bg: #d9f2e1;
+  --caution: #a8480a;
+  --caution-bg: #ffe6cf;
+  --on-caution: #ffffff;
+  --warn: #c0221d;
+  --warn-bg: #fbdcda;
+  --warn-solid: #c0221d;
+  --info: #1d5fa8;
+  --info-bg: #dce8f6;
+
+  --valve-open: #1e9a57;
+  --valve-closed: #d23a32;
+  --valve-unknown: #8a95a1;
+
+  --s1: #0e5fae;
+  --s2: #6b8f1c;
+  --s3: #7d52bd;
+  --s4: #1f8f6a;
+  --s-ref: #7a6200;
+  --s-truth: #6b7280;
+  --plot-grid: rgba(17, 24, 39, 0.08);
+
+  --scene-bg: #e6e2d8;
+  --scene-grid: #d3cec2;
+  --scene-grid-strong: #a39d90;
+  --scene-body: #fbfcfd;
+  --scene-accent: #1e3a5f;
+  --scene-dark: #3a424d;
+  --scene-metal: #59626e;
+  --scene-plume: #e07b00;
+
+  --pipe: #808894;
+  --pipe-live: #111827;
+}

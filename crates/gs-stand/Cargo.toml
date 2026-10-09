@@ -1,0 +1,27 @@
+[package]
+name = "gs-stand"
+description = "GTPL test-stand adapter: Arduino serial + MTV servos behind the gs-protocol UDP link, with timed sequences"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "gs-stand"
+path = "src/main.rs"
+
+[lib]
+name = "gs_stand"
+path = "src/lib.rs"
+
+[dependencies]
+gs-protocol = { path = "../gs-protocol" }
+serde = { workspace = true, features = ["std"] }
+# No libudev so the same manifest cross-compiles for the Jetson (aarch64-linux) and builds on macOS.
+serialport = { version = "4", default-features = false }
+toml = "0.8"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

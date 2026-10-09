@@ -1,0 +1,109 @@
+# Hotfire. Ported step-for-step from `jetson stuff/jetson/mtv/hotfire.py` (pfs_commands) with
+# angle_profile_start = 53.6 and profile "hold-20-8" (so the profile ends at T+61.6).
+#
+# T-0 is the DAQ sync line going high (gs-stand does that itself when the sequence starts,
+# legacy sent `sync high` right before starting the clocks). At the end gs-stand drops the
+# sync line and returns to Armed; the operator then Disarms (safing list) when ready.
+#
+# Before running (hotfire.txt, manual part): open OISO, wait 21 s, blip OFILL as needed. The
+# MTV is pre-positioned to 20 % at T-0 by `preposition = true` below (legacy commanded the
+# start angle at script start and again at T-0).
+#
+# The duplicated steps (oiso close x2, nitrous end x2) are in the legacy list because the
+# Arduino dropped bytes right after reset; they are harmless and kept for fidelity.
+
+name = "hotfire"
+description = "Nitrous hotfire: OISO close, vent, pressurize, OMV, igniter, OFILL, 20 % MTV hold for 8 s"
+
+[mtv_profile]
+start_t = 53.6
+profile = "hold-20-8"
+preposition = true
+
+[[step]]
+t = 0.0
+action = "valve oiso close"
+
+[[step]]
+t = 0.1
+action = "valve oiso close"
+
+[[step]]
+t = 0.5
+action = "loadcell engine begin"
+
+[[step]]
+t = 1.0
+action = "loadcell nitrous begin"
+
+[[step]]
+t = 21.0
+action = "valve lfvnt open"
+
+[[step]]
+t = 22.0
+action = "valve lfvnt close"
+
+[[step]]
+t = 22.5
+action = "valve puiso open"
+
+[[step]]
+t = 23.0
+action = "valve pufill open"
+
+[[step]]
+t = 48.0
+action = "valve omv open"
+
+[[step]]
+t = 48.5
+action = "valve igv open"
+
+[[step]]
+t = 48.7
+action = "output igniter on"
+
+[[step]]
+t = 49.7
+action = "output igniter off"
+
+[[step]]
+t = 53.5
+action = "valve igv close"
+
+[[step]]
+t = 53.6
+action = "valve ofill open"
+
+# ---- MTV profile runs 53.6 .. 61.6 ----
+
+[[step]]
+t = 61.6
+action = "valve ofill close"
+
+# Legacy sent the string "mtv open" to BOTH Arduinos here. Neither sketch knows a device
+# called "mtv", so on the real stand this step did nothing and the MTV stayed at the
+# profile's 20 % until the operator's shutdown. hotfire.txt says "fully open MTV", which is
+# what this does. Comment it out to reproduce what the legacy hardware actually did.
+[[step]]
+t = 62.1
+action = "mtv 100"
+
+[[step]]
+t = 63.6
+action = "loadcell engine end"
+
+[[step]]
+t = 63.7
+action = "loadcell nitrous end"
+
+[[step]]
+t = 63.8
+action = "loadcell nitrous end"
+
+# hotfire.txt ends with "close OMV, wait 0.25 s" after the MTV opens. hotfire.py never sent
+# it, so it is NOT part of this port. Uncomment once the team confirms it belongs here.
+# [[step]]
+# t = 64.1
+# action = "valve omv close"

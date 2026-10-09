@@ -1,0 +1,62 @@
+# Cold flow. From `jetson stuff/jetson/mtv/coldflow.py`. That script does not run as written
+# (it imports MTV_Profile and calls get_angle_profile with a 3-tuple return, neither of which
+# exists any more, and its profile string "100-8" lacks the "hold-" prefix); the command list
+# and times are still readable and are what is ported here, with the profile read as
+# "hold-100-8" starting at 0.5 s (ends at 8.5 s).
+#
+# NOTE coldflow.txt describes a longer manual/automatic procedure (OISO close, LFVENT blip,
+# PUISO, PUFILL before OFILL/OMV) that coldflow.py never implemented. Only the script's list
+# is here. Run those earlier valves by hand while Armed, or add them once agreed.
+#
+# "mtv open" was a no-op on the Arduino (no such device); see hotfire.toml. Here the profile
+# is already at 100 % so `mtv 100` at 9.0 changes nothing but keeps the step visible.
+
+name = "coldflow"
+description = "Cold flow: OFILL open, OMV open at 0.5 s, MTV 100 % for 8 s, OFILL close"
+
+[mtv_profile]
+start_t = 0.5
+profile = "hold-100-8"
+preposition = true
+
+[[step]]
+t = 0.0
+action = "valve ofill open"
+
+[[step]]
+t = 0.1
+action = "valve ofill open"
+
+[[step]]
+t = 0.2
+action = "loadcell engine begin"
+
+[[step]]
+t = 0.3
+action = "loadcell nitrous begin"
+
+[[step]]
+t = 0.5
+action = "valve omv open"
+
+# ---- MTV profile runs 0.5 .. 8.5 ----
+
+[[step]]
+t = 8.5
+action = "valve ofill close"
+
+[[step]]
+t = 9.0
+action = "mtv 100"
+
+[[step]]
+t = 10.4
+action = "loadcell engine end"
+
+[[step]]
+t = 10.5
+action = "loadcell nitrous end"
+
+[[step]]
+t = 10.6
+action = "loadcell nitrous end"
