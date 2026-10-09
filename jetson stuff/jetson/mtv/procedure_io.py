@@ -31,12 +31,15 @@ def read_line(port):
     return port.readline().decode("utf-8", errors="replace").strip() if port.in_waiting else ""
 
 
-def terminal_input():
+def terminal_input(eof_value=None):
     if sys.stdin is None:
         return None
     try:
         if select.select([sys.stdin], [], [], 0)[0]:
-            return sys.stdin.readline().strip().lower() or None
+            line = sys.stdin.readline()
+            if line == "":
+                return eof_value
+            return line.strip().lower() or None
     except (OSError, ValueError):
         pass
     return None

@@ -23,7 +23,8 @@ const int NITROUS_LDCL_SCK = 5;
 const int RCS_LDCL_DOUT = 6;
 const int RCS_LDCL_SCK = 7;
  
-//const bool USE_LOADCELL = true;
+// In Arduino IDE, upload with false to the relay board and true to the
+// HX711 board. The Jetson opens one serial port for each role.
 const bool USE_LOADCELL = false;
 bool engine_loadcell_send = false;
 bool nitrous_loadcell_send = false;
@@ -213,7 +214,7 @@ void parse_command(Command &command) {
   }
 }
 
-void setup_loadcell(HX711 &loadcell, String name, const int dout_pin, const int sck_pin, int scale) {
+void setup_loadcell(HX711 &loadcell, String name, const int dout_pin, const int sck_pin, float scale) {
   loadcell.begin(dout_pin, sck_pin);
   loadcell.set_scale(scale);
   loadcell.tare();
@@ -230,6 +231,16 @@ String get_loadcell_units(HX711 &loadcell, String name) {
   message += loadcell.get_units();
 
   return message;
+}
+
+// Logical output state for the RCS CLI. This reports the Arduino pin level
+// after applying this sketch's valve polarity; it is not position feedback.
+// Keep the older "<NAME> is <0|1>" status replies for gs-stand and legacy code.
+void report_valve_state(const char* name, int pin, int open_level) {
+  Serial.print("VALVE ");
+  Serial.print(name);
+  Serial.print(" ");
+  Serial.println(digitalRead(pin) == open_level ? "open" : "closed");
 }
 
 void loop() {
@@ -290,6 +301,8 @@ void loop() {
         int omv_state = digitalRead(OMV);
         String omv_message = "OMV is " + String(omv_state);
         Serial.println(omv_message);
+      } else if (command.action.equals("state")) {
+        report_valve_state("omv", OMV, HIGH);
       }
       break;
       
@@ -308,6 +321,8 @@ void loop() {
         int ovent_state = digitalRead(OVENT);
         String ovent_message = "OVENT is " + String(ovent_state);
         Serial.println(ovent_message);
+      } else if (command.action.equals("state")) {
+        report_valve_state("ovent", OVENT, LOW);
       }
       break;
      
@@ -392,6 +407,8 @@ void loop() {
         int puiso_state = digitalRead(PUISO);
         String puiso_message = "PUISO is " + String(puiso_state);
         Serial.println(puiso_message);
+      } else if (command.action.equals("state")) {
+        report_valve_state("puiso", PUISO, HIGH);
       }
       break;
 
@@ -410,6 +427,8 @@ void loop() {
         int igv_state = digitalRead(IGV);
         String igv_message = "IGV is " + String(igv_state);
         Serial.println(igv_message);
+      } else if (command.action.equals("state")) {
+        report_valve_state("igv", IGV, HIGH);
       }
       break;
 
@@ -428,6 +447,8 @@ void loop() {
         int ofill_state = digitalRead(OFILL);
         String ofill_message = "OFILL is " + String(ofill_state);
         Serial.println(ofill_message);
+      } else if (command.action.equals("state")) {
+        report_valve_state("ofill", OFILL, HIGH);
       }
       break;
 
@@ -446,6 +467,8 @@ void loop() {
         int lfvent_state = digitalRead(LFVENT);
         String lfvent_message = "LFVENT is " + String(lfvent_state);
         Serial.println(lfvent_message);
+      } else if (command.action.equals("state")) {
+        report_valve_state("lfvent", LFVENT, HIGH);
       }
       break;
 
@@ -464,6 +487,8 @@ void loop() {
         int pufill_state = digitalRead(PUFILL);
         String pufill_message = "PUFILL is " + String(pufill_state);
         Serial.println(pufill_message);
+      } else if (command.action.equals("state")) {
+        report_valve_state("pufill", PUFILL, HIGH);
       }
       break;
 
@@ -503,6 +528,8 @@ void loop() {
         int pumv_state = digitalRead(PUMV);
         String pumv_message = "PUMV is " + String(pumv_state);
         Serial.println(pumv_message);
+      } else if (command.action.equals("state")) {
+        report_valve_state("pumv", PUMV, HIGH);
       }
       break;
 
@@ -521,6 +548,8 @@ void loop() {
         int puvent_state = digitalRead(PUVENT);
         String puvent_message = "PUVENT is " + String(puvent_state);
         Serial.println(puvent_message);
+      } else if (command.action.equals("state")) {
+        report_valve_state("puvent", PUVENT, LOW);
       }
       break;
 

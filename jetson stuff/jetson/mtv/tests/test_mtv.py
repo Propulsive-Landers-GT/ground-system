@@ -1,6 +1,8 @@
 import importlib
 import io
+import csv
 import sys
+import tempfile
 import unittest
 from collections import deque
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
@@ -22,6 +24,7 @@ with patch.dict(sys.modules, {"Jetson": jetson, "Jetson.GPIO": gpio}):
     import procedure
     import procedure_io
     import rcs_procedure
+    import rcs_load_test
     import calibrate_mtv
     launchers = [importlib.import_module(name) for name in ("hotfire", "coldflow", "kaboom_test")]
 
@@ -70,7 +73,8 @@ class HardwareTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        modules = (mtv_module, mtv_servo, procedure, procedure_io, rcs_procedure, calibrate_mtv, *launchers)
+        modules = (mtv_module, mtv_servo, procedure, procedure_io, rcs_procedure, rcs_load_test,
+                   calibrate_mtv, *launchers)
         self.stack.enter_context(patch.dict(sys.modules, {
             "Jetson": jetson, "Jetson.GPIO": gpio, **{module.__name__: module for module in modules}
         }))
@@ -333,6 +337,179 @@ class HardwareTests(unittest.TestCase):
         self.assertAlmostEqual(self.clock.now - before, 0.04)
         with patch.object(port, "write", return_value=1), self.assertRaises(OSError):
             procedure_io.send_command(port, "third")
+
+    def test_single_servo_rcs_checkout_logs_samples_and_checked_commands(self):
+        class RelayPort(Port):
+            def write(self, data):
+                result = super().write(data)
+                command = data.decode()
+                if command == "sync status":
+                    self.lines.append(b"SYNC is 0\n")
+                elif command == "puiso state":
+                    state = b"open" if "puiso open" in self.writes[-2:] else b"closed"
+                    self.lines.append(b"VALVE puiso " + state + b"\n")
+                return result
+
+        relay, loadcell = RelayPort(), Port()
+        loadcell.stream = b"rcs:1.25\n"
+        with patch.dict(rcs_load_test.TEST_CONFIG, {
+            "actuation_port": "/dev/relay", "loadcell_port": "/dev/loadcell",
+            "servo_pin": 15, "servo_hz": 333, "pulse_min_us": 500,
+            "pulse_max_us": 2500, "servo_range_deg": 180,
+            "closed_deg": 10, "open_deg": 90, "valves": ("puiso",),
+        }):
+            args = rcs_load_test.parse_args([])
+        with tempfile.TemporaryDirectory() as folder:
+            args.log_dir = Path(folder)
+            with patch.object(rcs_load_test.serial, "Serial", side_effect=[relay, loadcell]), \
+                 patch.object(rcs_load_test, "terminal_input", side_effect=[
+                     "start", "set-zero 12", "set-open 100", "valve puiso open", "servo 50", "stop"]):
+                runner = rcs_load_test.RcsLoadTest(args)
+                runner.run()
+            self.assertTrue(relay.closed and loadcell.closed)
+            self.assertEqual(len(self.pwms), 1)
+            self.pwms[0].stop.assert_called_once()
+            self.assertIn("puiso open", relay.writes)
+            self.assertEqual(relay.writes[-1], "puiso close")
+            load_log = next(Path(folder).glob("rcs-load-*.csv")).read_text()
+            action_log = next(Path(folder).glob("rcs-actions-*.csv")).read_text()
+            self.assertIn("time_s,rcs", load_log)
+            self.assertIn(",1.25", load_log)
+            self.assertIn("puiso,open,,Arduino output state verified", action_log)
+            self.assertIn("servo,closed,12.0,endpoint updated", action_log)
+            self.assertIn("servo,open,100.0,endpoint updated", action_log)
+            self.assertIn("servo,50%,56.0,PWM command sent", action_log)
+            self.assertEqual(next(Path(folder).glob("rcs-load-*.csv")).name.replace("rcs-load-", ""),
+                             next(Path(folder).glob("rcs-actions-*.csv")).name.replace("rcs-actions-", ""))
+
+    def test_single_servo_code_config_must_identify_hardware(self):
+        with patch.dict(rcs_load_test.TEST_CONFIG, {
+            "actuation_port": "", "loadcell_port": "", "servo_pin": None,
+        }), self.assertRaises(SystemExit):
+            rcs_load_test.parse_args([])
+
+    def test_rcs_valve_state_mismatch_is_not_reported_as_verified(self):
+        class RelayPort(Port):
+            def write(self, data):
+                result = super().write(data)
+                if data == b"puiso state":
+                    self.lines.append(b"VALVE puiso closed\n")
+                return result
+
+        args = rcs_load_test.parse_args([
+            "--actuation-port", "/dev/relay", "--loadcell-port", "/dev/loadcell",
+            "--servo-pin", "15", "--valve", "puiso",
+        ])
+        runner = rcs_load_test.RcsLoadTest(args)
+        runner.actuation = RelayPort()
+        runner.loadcell = Port()
+        runner.started_at = self.clock.now
+        runner.action_log = io.StringIO()
+        runner.action_writer = csv.writer(runner.action_log)
+        with self.assertRaisesRegex(RuntimeError, "No matching Arduino valve state"):
+            runner.checked_valve("puiso", "open")
+        self.assertIn("puiso,open,,unverified", runner.action_log.getvalue())
+
+    def test_single_servo_rcs_checkout_stops_when_samples_never_start(self):
+        class RelayPort(Port):
+            def write(self, data):
+                result = super().write(data)
+                if data == b"sync status":
+                    self.lines.append(b"SYNC is 0\n")
+                elif data == b"puiso state":
+                    self.lines.append(b"VALVE puiso closed\n")
+                return result
+
+        relay, loadcell = RelayPort(), Port()
+        args = rcs_load_test.parse_args([
+            "--actuation-port", "/dev/relay", "--loadcell-port", "/dev/loadcell",
+            "--servo-pin", "15", "--servo-hz", "333", "--pulse-min-us", "500",
+            "--pulse-max-us", "2500", "--servo-range-deg", "180",
+            "--closed-deg", "10", "--open-deg", "90", "--valve", "puiso",
+        ])
+        with tempfile.TemporaryDirectory() as folder:
+            args.log_dir = Path(folder)
+            with patch.object(rcs_load_test.serial, "Serial", side_effect=[relay, loadcell]), \
+                 self.assertRaisesRegex(TimeoutError, "No load-cell sample"):
+                rcs_load_test.RcsLoadTest(args).run()
+            self.assertTrue(relay.closed and loadcell.closed)
+            self.assertEqual(relay.writes[-1], "puiso close")
+            self.pwms[0].stop.assert_called_once()
+            self.assertIn("puiso,close", next(Path(folder).glob("rcs-actions-*.csv")).read_text())
+
+    def test_single_servo_blips_make_twenty_alternating_actions_in_ten_seconds(self):
+        class RelayPort(Port):
+            def write(self, data):
+                result = super().write(data)
+                if data == b"sync status":
+                    self.lines.append(b"SYNC is 0\n")
+                elif data == b"puiso state":
+                    self.lines.append(b"VALVE puiso closed\n")
+                return result
+
+        relay, loadcell = RelayPort(), Port()
+        loadcell.stream = b"rcs:2.5\n"
+        with patch.dict(rcs_load_test.TEST_CONFIG, {"valves": (), "loadcells": ("rcs",)}):
+            args = rcs_load_test.parse_args([
+                "--actuation-port", "/dev/relay", "--loadcell-port", "/dev/loadcell",
+                "--servo-pin", "15",
+            ])
+        with tempfile.TemporaryDirectory() as folder:
+            args.log_dir = Path(folder)
+            queued = deque(["start", "blips"])
+            runner = rcs_load_test.RcsLoadTest(args)
+
+            def input_for_run(**kwargs):
+                if queued:
+                    return queued.popleft()
+                if runner.blips_index == 20 and runner.blips_started_at is None:
+                    return "stop"
+                return None
+
+            with patch.object(rcs_load_test.serial, "Serial", side_effect=[relay, loadcell]), \
+                 patch.object(rcs_load_test, "terminal_input", side_effect=input_for_run):
+                runner.run()
+            with next(Path(folder).glob("rcs-actions-*.csv")).open(newline="") as file:
+                rows = list(csv.DictReader(file))
+            servo_rows = [row for row in rows if row["actuator"] == "servo" and
+                          row["result"] == "PWM command sent; no position feedback"]
+            self.assertEqual(len(servo_rows), 20)
+            self.assertEqual([row["state"] for row in servo_rows], ["open", "closed"] * 10)
+            times = [float(row["time_s"]) for row in servo_rows]
+            for before, after in zip(times, times[1:]):
+                self.assertAlmostEqual(after - before, 0.5, delta=0.01)
+            self.assertGreaterEqual(self.clock.now - runner.started_at, 10)
+
+    def test_single_servo_logs_multiple_load_cells_on_the_same_time_column(self):
+        class RelayPort(Port):
+            def write(self, data):
+                result = super().write(data)
+                if data == b"sync status":
+                    self.lines.append(b"SYNC is 0\n")
+                elif data == b"puiso state":
+                    self.lines.append(b"VALVE puiso closed\n")
+                return result
+
+        relay, loadcell = RelayPort(), Port()
+        loadcell.stream = b"rcs:1.25 nitrous:2.5\n"
+        args = rcs_load_test.parse_args([
+            "--actuation-port", "/dev/relay", "--loadcell-port", "/dev/loadcell",
+            "--servo-pin", "15", "--valve", "puiso",
+            "--loadcell", "rcs", "--loadcell", "nitrous",
+        ])
+        with tempfile.TemporaryDirectory() as folder:
+            args.log_dir = Path(folder)
+            with patch.object(rcs_load_test.serial, "Serial", side_effect=[relay, loadcell]), \
+                 patch.object(rcs_load_test, "terminal_input", return_value="stop"):
+                rcs_load_test.RcsLoadTest(args).run()
+            with next(Path(folder).glob("rcs-load-*.csv")).open(newline="") as file:
+                rows = list(csv.reader(file))
+            self.assertEqual(rows[0], ["time_s", "rcs", "nitrous"])
+            self.assertEqual(rows[1][1:], ["1.25", "2.5"])
+            self.assertIn("rcs setup", loadcell.writes)
+            self.assertIn("nitrous setup", loadcell.writes)
+            self.assertIn("rcs end", loadcell.writes)
+            self.assertIn("nitrous end", loadcell.writes)
 
     def test_launchers_construct_current_profile_apis_without_hardware(self):
         for module in launchers:
