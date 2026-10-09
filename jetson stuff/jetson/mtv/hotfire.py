@@ -25,7 +25,7 @@ def main():
 
     pfs_profile = PFS_Profile(pfs_commands)
 
-    procedure = Procedure(angle_profile, pfs_profile, 15, 33, 0, debug=True)
+    procedure = Procedure(angle_profile, pfs_profile, 15, 33, debug=True)
     procedure.run()
 
 if __name__ == "__main__":

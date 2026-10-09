@@ -2,10 +2,8 @@ import os
 os.environ['JETSON_MODEL_NAME'] = "JETSON_ORIN_NANO"
 
 import Jetson.GPIO as GPIO
-import gpiod
 import time
 import csv
-import numpy as np
 
 class Encoder:
     def __init__(self, encoder_pins=[11, 13, 19, 21, 23, 29, 31, 35], translation_path="encoder_translation.csv", debug=False):
@@ -44,9 +42,10 @@ class Encoder:
         return pos
 
 if __name__ == "__main__":
-    encoder = Encoder(debug=True)
     try:
+        encoder = Encoder(debug=True)
         while True:
             encoder.read()
-    except KeyboardInterrupt:
-        GPIO.cleanup
+            time.sleep(0.005)
+    finally:
+        GPIO.cleanup()

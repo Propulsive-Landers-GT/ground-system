@@ -2,208 +2,123 @@ import os
 os.environ['JETSON_MODEL_NAME'] = "JETSON_ORIN_NANO"
 
 import Jetson.GPIO as GPIO
-import gpiod
 import serial
 import csv
-import sys
 import time
-from datetime import datetime
-import numpy as np
-import select
 from mtv_module import MTV, PFS_Profile
 from click_checks import manual_control
+from procedure_io import read_line, send_command, shutdown, terminal_input, wait_for_message, wait_for_start
 
 class RCS_Procedure:
-    # 0 angle is closed, 180 angle is open
-    def __init__(self, pfs_profile, pin1=15, pin2=33, servo2_offset=0, debug=False):
-        self.ACTUATION_SERIAL_PORT = "/dev/ttyACM0"
-        self.LOADCELL_SERIAL_PORT = "/dev/ttyACM1"
+    # 0 degrees is closed; 90 degrees is open.
+    def __init__(self, pfs_profile, pin1=15, pin2=33, servo2_offset=None, debug=False,
+                 start_pin=None, setup_timeout=30, actuation_port="/dev/ttyACM0", loadcell_port="/dev/ttyACM1"):
+        if start_pin in (pin1, pin2):
+            raise ValueError("Start pin conflicts with a servo pin")
+        self.ACTUATION_SERIAL_PORT = actuation_port
+        self.LOADCELL_SERIAL_PORT = loadcell_port
         self.BAUD_RATE = 115200
-        
-        GPIO.setmode(GPIO.BOARD)
-
-        # pin1, pin2, servo_offset
-        self.mtv = MTV(pin1, pin2, servo2_offset=servo2_offset)
-        self.mtv.command(90) # TODO: set this to open
-
-        self.actuation_ser = serial.Serial(self.ACTUATION_SERIAL_PORT, self.BAUD_RATE, timeout=0.05)
-        self.actuation_ser.setDTR(False)
-        time.sleep(0.1)
-        self.actuation_ser.setDTR(True)
-
-        self.loadcell_ser = serial.Serial(self.LOADCELL_SERIAL_PORT, self.BAUD_RATE, timeout=0.05)
-        self.loadcell_ser.setDTR(False)
-        time.sleep(0.1)
-        self.loadcell_ser.setDTR(True)
-        
+        self.mtv = self.actuation_ser = self.loadcell_ser = self.log_file = None
+        self._closed = False
+        self.start_pin = start_pin
+        self.setup_timeout = setup_timeout
         self.pfs_profile = pfs_profile
         self.debug = debug
-    
+        try:
+            self.mtv = MTV(pin1, pin2, servo2_offset=servo2_offset)
+            self.actuation_ser = serial.Serial(self.ACTUATION_SERIAL_PORT, self.BAUD_RATE, timeout=0.05, write_timeout=1)
+            self.actuation_ser.setDTR(False)
+            time.sleep(0.1)
+            self.actuation_ser.setDTR(True)
+            self.loadcell_ser = serial.Serial(self.LOADCELL_SERIAL_PORT, self.BAUD_RATE, timeout=0.05, write_timeout=1)
+            self.loadcell_ser.setDTR(False)
+            time.sleep(0.1)
+            self.loadcell_ser.setDTR(True)
+        except BaseException:
+            self.shutdown()
+            raise
+
     def shutdown(self):
-        print("Setting MTV to zero", flush=True)
-        self.mtv.command(0)
-        time.sleep(2)
-        print("Shutting down", flush=True)
-        self.mtv.stop()
-        GPIO.cleanup()
-        sys.exit()
-    
+        if not self._closed:
+            self._closed = True
+            shutdown(self.mtv, self.actuation_ser, self.loadcell_ser, self.log_file)
+
     def run(self, on_restart=False):
-        # Read from MTV start pin once we begin
-        # Read over Serial usb
-        # Output an angle profile!
-        
-        if not on_restart:
-            print("Starting...", flush=True)
-
-            actuation_ready = False
-            loadcell_ready = False
-            while True:
-                actuation_read = self.actuation_ser.readline().decode("utf-8").strip()
-                loadcell_read = self.loadcell_ser.readline().decode("utf-8").strip()
-                if actuation_read != "":
-                    print("actuation: " + actuation_read, flush=True)
-                if loadcell_read != "":
-                    print("loadcell: " + loadcell_read, flush=True)
-                if actuation_read == "connected":
-                    actuation_ready = True
-                if loadcell_read == "connected":
-                    loadcell_ready = True
-                if actuation_ready and loadcell_ready:
-                    break
-
-            print("Connected to Arduino", flush=True)
-
-            print("Setting up rcs loadcell", flush=True)
-            self.loadcell_ser.write("rcs setup".encode("utf-8"))
-            self.loadcell_ser.flush()
-            while True:
-                read = self.loadcell_ser.readline().decode("utf-8").strip()
-                if read != "":
-                    print(read, flush=True)
-                if read == "rcs loadcell ready":
-                    break
-            print("rcs loadcell setup complete", flush=True)
-        else:
-            actuation_ready = True
-            loadcell_ready = True
-
-            time.sleep(0.2)
-            self.loadcell_ser.reset_input_buffer()
-            self.loadcell_ser.write("rcs end".encode("utf-8"))
-            self.loadcell_ser.flush()
-            time.sleep(0.2)
-
-        
-        print("Ready for procedure start", flush=True)
-
-        try: 
-            while True:
-                user_input, actuation_read, loadcell_read = manual_control(self.actuation_ser, self.loadcell_ser, self.mtv, debug=True)
-                if not user_input is None:
-                    if user_input == "start":
-                        break
-        except KeyboardInterrupt:
+        try:
+            self._run(on_restart)
+        finally:
             self.shutdown()
 
-        print("Procedure start", flush=True)
+    def _run(self, on_restart):
+        if self._closed:
+            raise RuntimeError("Procedure is already shut down")
+        if not on_restart:
+            print("Starting...", flush=True)
+            for port in (self.actuation_ser, self.loadcell_ser):
+                wait_for_message(port, "connected", self.setup_timeout)
+            for name in ('rcs',):
+                send_command(self.loadcell_ser, f"{name} setup")
+                wait_for_message(self.loadcell_ser, f"{name} loadcell ready", self.setup_timeout)
+        else:
+            for name in ('rcs',):
+                send_command(self.loadcell_ser, f"{name} end")
 
-        self.actuation_ser.write("sync high".encode("utf-8"))
-        self.actuation_ser.flush()
-        sync_time = datetime.now()
+        control = lambda: manual_control(self.actuation_ser, self.loadcell_ser, self.mtv, debug=self.debug)
+        if not wait_for_start(control, self.start_pin):
+            return
 
-        time.sleep(0.2)
-        
-        file = open('rcs_log.csv', mode='w', newline='')
-
+        self.log_file = file = open('rcs_log.csv', mode="w", newline="")
         writer = csv.writer(file)
-        writer.writerow(["timestamp", "rcs_value"])
+        writer.writerow(['timestamp', 'rcs_value'])
         file.flush()
-        
-        self.pfs_profile.start()
-        while (not self.pfs_profile.done()):
-            if select.select([sys.stdin], [], [], 0)[0]:
-                user_input = sys.stdin.readline().strip()
-
-                if user_input == "exit" or user_input == "e":
-                    self.actuation_ser.reset_input_buffer()
-                    self.actuation_ser.write("shutdown begin".encode("utf-8"))
-                    self.actuation_ser.flush()
-                    time.sleep(0.2)
-                    self.actuation_ser.reset_input_buffer()
-                    self.actuation_ser.write("sync low".encode("utf-8"))
-                    self.actuation_ser.flush()
-                    self.pfs_profile.restart()
-                    self.run(on_restart=True)
-                    self.shutdown()
-                    break
-            
-            while self.loadcell_ser.in_waiting:
-                if self.debug:
-                    actuation_read_value = self.actuation_ser.readline().decode("utf-8").strip()
-                    if actuation_read_value:
-                        print("actuation: " + actuation_read_value, flush=True)
-
-                loadcell_read_value = self.loadcell_ser.readline().decode("utf-8").strip()
-                if loadcell_read_value:
-                    if self.debug:
-                        print("loadcell: " + loadcell_read_value, flush=True)
-
-                    loadcell_values = loadcell_read_value.split(" ")
-                    rcs_value = 0.0
-                    for i in loadcell_values:
-                        if "rcs" in i:
-                            rcs_value = i.split(":")[1]
-
-                    # Get system time
-                    timestamp = (datetime.now() - sync_time).total_seconds()
-
-                    # Write to CSV
-                    writer.writerow([timestamp, rcs_value])
-                    file.flush()
-
+        print("Procedure start", flush=True)
+        sync_time = time.monotonic()
+        send_command(self.actuation_ser, "sync high")
+        self.pfs_profile.start(sync_time)
+        self.mtv.command(90)
+        while not self.pfs_profile.done():
+            if terminal_input() in ("exit", "e", "end"):
+                return
             serial_command = self.pfs_profile.update()
             if serial_command is not None:
                 if self.debug:
                     print(serial_command, flush=True)
-                self.actuation_ser.reset_input_buffer()
-                self.actuation_ser.write(serial_command.encode("utf-8"))
-                self.actuation_ser.flush()
-                self.loadcell_ser.reset_input_buffer()
-                self.loadcell_ser.write(serial_command.encode("utf-8"))
-                self.loadcell_ser.flush()
-        
-        file.flush()
+                send_command(self.actuation_ser, serial_command)
+                send_command(self.loadcell_ser, serial_command)
+
+            actuation_read = read_line(self.actuation_ser)
+            if self.debug and actuation_read:
+                print("actuation: " + actuation_read, flush=True)
+            loadcell_read = read_line(self.loadcell_ser)
+            if loadcell_read:
+                if self.debug:
+                    print("loadcell: " + loadcell_read, flush=True)
+                values = {}
+                for token in loadcell_read.split():
+                    name, separator, value = token.partition(":")
+                    if separator:
+                        try:
+                            values[name] = float(value)
+                        except ValueError:
+                            pass
+                if any(name in values for name in ('rcs',)):
+                    writer.writerow([time.monotonic() - sync_time] + [values.get(name, "") for name in ('rcs',)])
+                    file.flush()
+            time.sleep(0.001)
+
+        self.mtv.command(0)
         file.close()
-
-
-        time.sleep(0.2)
-        
-        self.actuation_ser.reset_input_buffer()
-        self.actuation_ser.write("sync low".encode("utf-8"))
-        self.actuation_ser.flush()
-
-        time.sleep(0.2)
-
+        send_command(self.actuation_ser, "sync low")
         print("Manual Control Enabled", flush=True)
-
-        try: 
-            while True:
-                user_input, actuation_read, loadcell_read = manual_control(self.actuation_ser, self.loadcell_ser, self.mtv, debug=True)
-                if not user_input is None:
-                    if user_input == "end":
-                        break
-        except KeyboardInterrupt:
-            self.shutdown()
-
-        self.shutdown()
+        while control()[0] not in ("end", "exit", "e"):
+            time.sleep(0.005)
 
 def main():
     pfs_commands = [("rcs begin", 0.0), ("rcs begin", 0.1), ("puiso open", 1.0), ("pumv open", 1.5),  ("puiso close", 4.5), ("pumv close", 5.5),  ("rcs end", 5.6), ("rcs end", 5.7)]
 
     pfs_profile = PFS_Profile(pfs_commands)
 
-    procedure = RCS_Procedure(pfs_profile, 15, 33, 0, debug=True)
+    procedure = RCS_Procedure(pfs_profile, 15, 33, debug=True)
     procedure.run()
 
 if __name__ == "__main__":
