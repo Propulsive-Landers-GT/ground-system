@@ -6,11 +6,13 @@ import math
 import time
 from mtv_servo import Servo
 from procedure_io import cleanup
+from mtv_calibration import DEFAULT_CALIBRATION, load_calibration
 
 DEFAULT_CLOSE_ANGLE = 44.0
 DEFAULT_SERVO2_OFFSET = 0.0
 DEFAULT_SERVO1_DIRECTION = 1
 DEFAULT_SERVO2_DIRECTION = 1
+DEFAULT_VALVE_DIRECTION = 1
 DEFAULT_GEAR_RATIO = 2
 DEFAULT_SERVO_RANGE = 355
 
@@ -18,16 +20,26 @@ DEFAULT_SERVO_RANGE = 355
 class MTV:
     # Pins 15, 32, and 33 are pwm enabled
     # Pins 6, 34, and 39 are ground
+    @classmethod
+    def from_calibration(cls, path=DEFAULT_CALIBRATION, **overrides):
+        settings = load_calibration(path)
+        settings.pop("valve")
+        settings.update(overrides)
+        return cls(**settings)
+
     def __init__(self, pin1, pin2, close_angle=None, gear_ratio=DEFAULT_GEAR_RATIO,
                  servo2_offset=None, servo_range=DEFAULT_SERVO_RANGE,
-                 servo1_direction=None, servo2_direction=None):
+                 servo1_direction=None, servo2_direction=None, valve_direction=None):
         # close_angle uses valve degrees; servo2_offset uses servo degrees.
         close_angle = DEFAULT_CLOSE_ANGLE if close_angle is None else close_angle
         servo2_offset = DEFAULT_SERVO2_OFFSET if servo2_offset is None else servo2_offset
         self.servo1_direction = DEFAULT_SERVO1_DIRECTION if servo1_direction is None else servo1_direction
         self.servo2_direction = DEFAULT_SERVO2_DIRECTION if servo2_direction is None else servo2_direction
+        self.valve_direction = DEFAULT_VALVE_DIRECTION if valve_direction is None else valve_direction
         if self.servo1_direction not in (-1, 1) or self.servo2_direction not in (-1, 1):
             raise ValueError("Servo directions must be +1 or -1")
+        if self.valve_direction not in (-1, 1):
+            raise ValueError("Valve direction must be +1 or -1")
         if pin1 == pin2:
             raise ValueError("Servos must use different pins")
         if not all(math.isfinite(v) for v in (close_angle, gear_ratio, servo2_offset, servo_range)) or gear_ratio <= 0 or servo_range <= 0:
@@ -52,6 +64,7 @@ class MTV:
             raise
     
     def _positions(self, angle):
+        angle = 90 - angle if self.valve_direction == -1 else angle
         angles = self.close_angle + angle * self.gear_ratio, self.close_angle + self.offset + angle * self.gear_ratio
         return tuple(value if direction == 1 else self.servo_range - value
                      for value, direction in zip(angles, (self.servo1_direction, self.servo2_direction)))
