@@ -1,6 +1,8 @@
 import importlib
+import ast
 import io
 import sys
+import tempfile
 import unittest
 from collections import deque
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
@@ -76,6 +78,8 @@ class HardwareTests(unittest.TestCase):
         }))
         self.stack.enter_context(redirect_stdout(io.StringIO()))
         self.stack.enter_context(redirect_stderr(io.StringIO()))
+        self.output_path = Path(self.stack.enter_context(tempfile.TemporaryDirectory())) / "calibration.txt"
+        self.stack.enter_context(patch.object(calibrate_mtv, "DEFAULT_OUTPUT", self.output_path))
         self.clock = Clock()
         self.stack.enter_context(patch.object(procedure_io.time, "monotonic", side_effect=lambda: self.clock.now))
         self.stack.enter_context(patch.object(procedure_io.time, "sleep", side_effect=self.clock.sleep))
@@ -390,11 +394,37 @@ class HardwareTests(unittest.TestCase):
 
     def test_calibration_rejects_invalid_input_without_partial_motion_or_state_change(self):
         lead, follower = Mock(), Mock()
-        commands = ["lead 350", "offset -100", "valve 91", "lead nan", "trim inf", "offset bad", "unknown 1", "show", "jog 1", "quit"]
+        commands = ["lead 350", "offset -100", "valve 91", "lead nan", "trim inf", "offset bad", "unknown 1",
+                    "servo1 -1", "servo2 356", "servo1 nan", "servo2 inf", "show", "jog 1", "quit"]
         with patch.object(mtv_servo, "Servo", side_effect=[lead, follower]), patch("builtins.input", side_effect=commands):
             calibrate_mtv.main(["--lead", "80", "--offset", "10"])
         lead.command.assert_called_once_with(81)
         follower.command.assert_called_once_with(91)
+
+    def test_independent_servo_commands_leave_the_other_servo_untouched(self):
+        for command, selected in (("servo1 100.1", 0), ("servo2 100.1", 1)):
+            with self.subTest(command=command):
+                servos = [Mock(), Mock()]
+                with patch.object(mtv_servo, "Servo", side_effect=servos), \
+                        patch("builtins.input", side_effect=[command, "quit"]):
+                    calibrate_mtv.main(["--lead", "80.2", "--offset", "4.3"])
+                servos[selected].command.assert_called_once()
+                self.assertAlmostEqual(servos[selected].command.call_args.args[0], 100.1)
+                servos[1 - selected].command.assert_not_called()
+                for servo in servos:
+                    servo.stop.assert_called_once()
+
+    def test_independent_servo_commands_preserve_valve_preview_and_calibration(self):
+        lead, follower = Mock(), Mock()
+        commands = ["valve 45", "servo1 171.5", "servo2 180.25", "valve 0", "quit"]
+        output = io.StringIO()
+        with patch.object(mtv_servo, "Servo", side_effect=[lead, follower]), \
+                patch("builtins.input", side_effect=commands), redirect_stdout(output):
+            calibrate_mtv.main(["--lead", "80", "--offset", "4"])
+        self.assertEqual([call.args[0] for call in lead.command.call_args_list], [170, 171.5, 81.5])
+        self.assertEqual([call.args[0] for call in follower.command.call_args_list], [174, 180.25, 90.25])
+        self.assertIn("DEFAULT_CLOSE_ANGLE = 40.75", output.getvalue())
+        self.assertIn("DEFAULT_SERVO2_OFFSET = 8.75", output.getvalue())
 
     def test_calibration_reports_zero_defaults_independently_of_preview_angle(self):
         output = io.StringIO()
@@ -439,11 +469,142 @@ class HardwareTests(unittest.TestCase):
                     servo.stop.assert_called_once()
 
     def test_calibration_rejects_invalid_startup_positions_before_servo_creation(self):
-        for args in (["--lead", "350", "--offset", "10"], ["--lead", "nan"], ["--pin1", "15", "--pin2", "15"]):
+        for args in (["--lead", "350", "--offset", "10"], ["--lead", "nan"], ["--pin1", "15", "--pin2", "15"], ["--direction1", "0"]):
             with self.subTest(args=args), patch.object(mtv_servo, "Servo") as factory:
                 with self.assertRaises(SystemExit):
                     calibrate_mtv.main(args)
                 factory.assert_not_called()
+
+    def test_mtv_and_calibration_match_for_all_direction_combinations(self):
+        for direction1 in (-1, 1):
+            for direction2 in (-1, 1):
+                with self.subTest(directions=(direction1, direction2)):
+                    zero1 = 80 if direction1 == 1 else 260
+                    zero2 = 84 if direction2 == 1 else 264
+                    mtv = mtv_module.MTV(15, 33, close_angle=zero1 / 2, servo2_offset=zero2 - zero1,
+                                         servo1_direction=direction1, servo2_direction=direction2)
+                    with patch.object(mtv.servo1, "command") as lead, patch.object(mtv.servo2, "command") as follower:
+                        for valve in (0, 45, 90):
+                            expected = (zero1 + direction1 * valve * 2, zero2 + direction2 * valve * 2)
+                            self.assertEqual(calibrate_mtv.positions(zero1, zero2 - zero1, valve, 2, 355, direction1, direction2), expected)
+                            mtv.command(valve)
+                            lead.assert_called_with(expected[0])
+                            follower.assert_called_with(expected[1])
+                    mtv.stop()
+
+    def test_mtv_rejects_invalid_directions_and_reverse_travel_before_gpio_setup(self):
+        for kwargs in ({"servo1_direction": 0}, {"servo2_direction": 2}, {"servo1_direction": -1},
+                       {"servo2_direction": -1}, {"servo2_direction": float("nan")}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                mtv_module.MTV(15, 33, **kwargs)
+        gpio.setup.assert_not_called()
+
+    def test_direction_defaults_reach_both_runners(self):
+        with patch.multiple(mtv_module, DEFAULT_CLOSE_ANGLE=100, DEFAULT_SERVO2_OFFSET=-150,
+                            DEFAULT_SERVO1_DIRECTION=-1, DEFAULT_SERVO2_DIRECTION=1):
+            for module in (procedure, rcs_procedure):
+                with self.subTest(module=module.__name__):
+                    runner, _, _ = self.make_runner(module)
+                    with patch.object(runner.mtv.servo1, "command") as lead, patch.object(runner.mtv.servo2, "command") as follower:
+                        runner.mtv.command(90)
+                        lead.assert_called_once_with(20)
+                        follower.assert_called_once_with(230)
+                    runner.shutdown()
+
+    def test_flipping_directions_at_zero_does_not_move_either_servo(self):
+        lead, follower = Mock(), Mock()
+        commands = ["direction1 -1", "flip2", "flip1", "direction2 1", "quit"]
+        with patch.object(mtv_servo, "Servo", side_effect=[lead, follower]), patch("builtins.input", side_effect=commands):
+            calibrate_mtv.main([])
+        lead.command.assert_not_called()
+        follower.command.assert_not_called()
+        self.assertEqual(self.output_path.read_text().count("# Calibration "), 5)
+
+    def test_direction_changes_require_zero_and_valid_sign(self):
+        lead, follower = Mock(), Mock()
+        commands = ["direction1 0", "direction2 nan", "valve 10", "flip2", "direction1 -1", "valve 0", "flip2", "quit"]
+        output = io.StringIO()
+        with patch.object(mtv_servo, "Servo", side_effect=[lead, follower]), \
+                patch("builtins.input", side_effect=commands), redirect_stdout(output):
+            calibrate_mtv.main(["--lead", "90", "--offset", "175"])
+        self.assertEqual([call.args[0] for call in lead.command.call_args_list], [110, 90])
+        self.assertEqual([call.args[0] for call in follower.command.call_args_list], [285, 265])
+        self.assertIn("Set valve 0 before changing servo direction", output.getvalue())
+        self.assertEqual(self.output_path.read_text().count("# Calibration "), 4)
+
+    def test_paired_and_independent_adjustments_with_opposite_directions(self):
+        lead, follower = Mock(), Mock()
+        commands = ["jog 2", "lead 90", "valve 45", "servo1 181.5", "servo2 170.25", "valve 0", "quit"]
+        with patch.object(mtv_servo, "Servo", side_effect=[lead, follower]), patch("builtins.input", side_effect=commands):
+            calibrate_mtv.main(["--lead", "80", "--offset", "184", "--direction2", "-1"])
+        self.assertEqual([call.args[0] for call in lead.command.call_args_list], [82, 90, 180, 181.5, 91.5])
+        self.assertEqual([call.args[0] for call in follower.command.call_args_list], [262, 254, 164, 170.25, 260.25])
+
+    def test_saved_settings_append_and_reproduce_calibration_in_mtv(self):
+        self.output_path.write_text("# Earlier calibration retained\n")
+        lead, follower = Mock(), Mock()
+        commands = ["flip2", "valve 10", "trim -1", "save", "quit"]
+        with patch.object(mtv_servo, "Servo", side_effect=[lead, follower]), patch("builtins.input", side_effect=commands):
+            calibrate_mtv.main(["--lead", "90", "--offset", "175"])
+        saved = self.output_path.read_text()
+        self.assertTrue(saved.startswith("# Earlier calibration retained\n"))
+        self.assertEqual(saved.count("# Calibration "), 5)
+        self.assertIn("# Full valve stroke: valid", saved)
+        values = {node.targets[0].id: ast.literal_eval(node.value) for node in ast.parse(saved).body}
+        self.assertEqual(values, dict(DEFAULT_CLOSE_ANGLE=45, DEFAULT_SERVO2_OFFSET=174,
+                                     DEFAULT_SERVO1_DIRECTION=1, DEFAULT_SERVO2_DIRECTION=-1,
+                                     DEFAULT_GEAR_RATIO=2, DEFAULT_SERVO_RANGE=355))
+        with patch.multiple(mtv_module, **values):
+            mtv = mtv_module.MTV(15, 33)
+            with patch.object(mtv.servo1, "command") as command1, patch.object(mtv.servo2, "command") as command2:
+                mtv.command(10)
+                command1.assert_called_once_with(110)
+                command2.assert_called_once_with(244)
+            mtv.stop()
+
+    def test_explicit_save_uses_selected_path_without_extra_motion(self):
+        path = self.output_path.with_name("assembly settings.txt")
+        servos = [Mock(), Mock()]
+        with patch.object(mtv_servo, "Servo", side_effect=servos), patch("builtins.input", side_effect=["save", "quit"]):
+            calibrate_mtv.main(["--output", str(path)])
+        self.assertIn("DEFAULT_SERVO1_DIRECTION = 1", path.read_text())
+        self.assertFalse(self.output_path.exists())
+        for servo in servos:
+            servo.command.assert_not_called()
+
+    def test_autosaved_direction_survives_interrupt(self):
+        servos = [Mock(), Mock()]
+        with patch.object(mtv_servo, "Servo", side_effect=servos), patch("builtins.input", side_effect=["flip2", KeyboardInterrupt]):
+            calibrate_mtv.main([])
+        self.assertIn("DEFAULT_SERVO2_DIRECTION = -1", self.output_path.read_text())
+        for servo in servos:
+            servo.stop.assert_called_once()
+
+    def test_startup_direction_settings_are_saved_without_interactive_changes(self):
+        servos = [Mock(), Mock()]
+        with patch.object(mtv_servo, "Servo", side_effect=servos), patch("builtins.input", return_value="quit"):
+            calibrate_mtv.main(["--lead", "260", "--offset", "4", "--direction1", "-1", "--direction2", "-1"])
+        saved = self.output_path.read_text()
+        self.assertIn("DEFAULT_SERVO1_DIRECTION = -1", saved)
+        self.assertIn("DEFAULT_SERVO2_DIRECTION = -1", saved)
+        self.assertIn("DEFAULT_CLOSE_ANGLE = 130", saved)
+        self.assertIn("# Full valve stroke: valid", saved)
+
+    def test_output_open_failure_prevents_servo_initialization(self):
+        with patch.object(mtv_servo, "Servo") as factory, patch.object(Path, "open", side_effect=OSError("unwritable file")):
+            with self.assertRaises(OSError):
+                calibrate_mtv.main([])
+        factory.assert_not_called()
+
+    def test_save_failure_still_stops_pwm_and_cleans_gpio(self):
+        servos = [Mock(), Mock()]
+        with patch.object(mtv_servo, "Servo", side_effect=servos), patch("builtins.input", return_value="jog 1"), \
+                patch.object(calibrate_mtv, "save_settings", side_effect=[None, OSError("disk full")]):
+            with self.assertRaises(OSError):
+                calibrate_mtv.main([])
+        for servo in servos:
+            servo.stop.assert_called_once()
+        gpio.cleanup.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ from procedure_io import cleanup
 
 DEFAULT_CLOSE_ANGLE = 44.0
 DEFAULT_SERVO2_OFFSET = 0.0
+DEFAULT_SERVO1_DIRECTION = 1
+DEFAULT_SERVO2_DIRECTION = 1
 DEFAULT_GEAR_RATIO = 2
 DEFAULT_SERVO_RANGE = 355
 
@@ -17,16 +19,22 @@ class MTV:
     # Pins 15, 32, and 33 are pwm enabled
     # Pins 6, 34, and 39 are ground
     def __init__(self, pin1, pin2, close_angle=None, gear_ratio=DEFAULT_GEAR_RATIO,
-                 servo2_offset=None, servo_range=DEFAULT_SERVO_RANGE):
+                 servo2_offset=None, servo_range=DEFAULT_SERVO_RANGE,
+                 servo1_direction=None, servo2_direction=None):
         # close_angle uses valve degrees; servo2_offset uses servo degrees.
         close_angle = DEFAULT_CLOSE_ANGLE if close_angle is None else close_angle
         servo2_offset = DEFAULT_SERVO2_OFFSET if servo2_offset is None else servo2_offset
+        self.servo1_direction = DEFAULT_SERVO1_DIRECTION if servo1_direction is None else servo1_direction
+        self.servo2_direction = DEFAULT_SERVO2_DIRECTION if servo2_direction is None else servo2_direction
+        if self.servo1_direction not in (-1, 1) or self.servo2_direction not in (-1, 1):
+            raise ValueError("Servo directions must be +1 or -1")
         if pin1 == pin2:
             raise ValueError("Servos must use different pins")
         if not all(math.isfinite(v) for v in (close_angle, gear_ratio, servo2_offset, servo_range)) or gear_ratio <= 0 or servo_range <= 0:
             raise ValueError("Invalid MTV calibration")
-        endpoints = [(close_angle + angle) * gear_ratio + offset
-                     for angle in (0, 90) for offset in (0, servo2_offset)]
+        endpoints = [close_angle * gear_ratio + offset + direction * angle * gear_ratio
+                     for angle in (0, 90)
+                     for offset, direction in ((0, self.servo1_direction), (servo2_offset, self.servo2_direction))]
         if not all(0 <= angle <= servo_range for angle in endpoints):
             raise ValueError("Calibration must allow the full 0–90 degree valve stroke on both servos")
         self.offset = servo2_offset
@@ -44,13 +52,14 @@ class MTV:
     def command(self, angle):
         if not math.isfinite(angle) or not 0 <= angle <= 90:
             raise ValueError("MTV angle must be between 0 and 90 degrees")
-        command_angle = self.close_angle + angle * self.gear_ratio
-        self.servo1._get_pwm(command_angle)
-        self.servo2._get_pwm(command_angle + self.offset)
+        angle1 = self.close_angle + self.servo1_direction * angle * self.gear_ratio
+        angle2 = self.close_angle + self.offset + self.servo2_direction * angle * self.gear_ratio
+        self.servo1._get_pwm(angle1)
+        self.servo2._get_pwm(angle2)
         try:
-            self.servo1.command(command_angle)
+            self.servo1.command(angle1)
         finally:
-            self.servo2.command(command_angle + self.offset)
+            self.servo2.command(angle2)
 
     def stop(self):
         try:
