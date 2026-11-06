@@ -5,3 +5,4 @@ logs/
 *.mcap
 .DS_Store
 web/screenshots/
+__pycache__/
