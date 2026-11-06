@@ -32,28 +32,34 @@ class MTV:
             raise ValueError("Servos must use different pins")
         if not all(math.isfinite(v) for v in (close_angle, gear_ratio, servo2_offset, servo_range)) or gear_ratio <= 0 or servo_range <= 0:
             raise ValueError("Invalid MTV calibration")
-        endpoints = [close_angle * gear_ratio + offset + direction * angle * gear_ratio
+        endpoints = [close_angle * gear_ratio + offset + angle * gear_ratio
                      for angle in (0, 90)
-                     for offset, direction in ((0, self.servo1_direction), (servo2_offset, self.servo2_direction))]
+                     for offset in (0, servo2_offset)]
         if not all(0 <= angle <= servo_range for angle in endpoints):
             raise ValueError("Calibration must allow the full 0–90 degree valve stroke on both servos")
         self.offset = servo2_offset
         self.gear_ratio = gear_ratio
+        self.servo_range = servo_range
         self.close_angle = close_angle * self.gear_ratio
+        angle1, angle2 = self._positions(0)
         self.servo1 = self.servo2 = None
         try:
             GPIO.setmode(GPIO.BOARD)
-            self.servo1 = Servo(pin1, range=servo_range, initial_angle=self.close_angle)
-            self.servo2 = Servo(pin2, range=servo_range, initial_angle=self.close_angle + self.offset)
+            self.servo1 = Servo(pin1, range=servo_range, initial_angle=angle1)
+            self.servo2 = Servo(pin2, range=servo_range, initial_angle=angle2)
         except BaseException:
             cleanup(self.stop, GPIO.cleanup)
             raise
     
+    def _positions(self, angle):
+        angles = self.close_angle + angle * self.gear_ratio, self.close_angle + self.offset + angle * self.gear_ratio
+        return tuple(value if direction == 1 else self.servo_range - value
+                     for value, direction in zip(angles, (self.servo1_direction, self.servo2_direction)))
+
     def command(self, angle):
         if not math.isfinite(angle) or not 0 <= angle <= 90:
             raise ValueError("MTV angle must be between 0 and 90 degrees")
-        angle1 = self.close_angle + self.servo1_direction * angle * self.gear_ratio
-        angle2 = self.close_angle + self.offset + self.servo2_direction * angle * self.gear_ratio
+        angle1, angle2 = self._positions(angle)
         self.servo1._get_pwm(angle1)
         self.servo2._get_pwm(angle2)
         try:

@@ -6,15 +6,15 @@ from pathlib import Path
 DEFAULT_OUTPUT = Path(__file__).with_name("mtv_calibration.txt")
 
 HELP = """Commands (press Enter to apply):
-  servo1 N   Set servo 1's absolute angle, leaving servo 2 unchanged
-  servo2 N   Set servo 2's absolute angle, leaving servo 1 unchanged
+  servo1 N   Set servo 1's logical angle, leaving servo 2 unchanged
+  servo2 N   Set servo 2's logical angle, leaving servo 1 unchanged
   lead N     Set the lead servo's valve-zero position, in servo degrees
   offset N   Set servo 2's valve-zero offset from the lead, in servo degrees
   jog N      Move the lead by N servo degrees; servo 2 follows its direction
   trim N     Add N servo degrees to servo 2's offset only
   valve N    Test a valve angle from 0 to 90 degrees using this calibration
-  direction1 N / direction2 N   Set a servo's direction to +1 or -1 at valve 0
-  flip1 / flip2                 Reverse a servo's direction at valve 0
+  direction1 N / direction2 N   Set normal (+1) or mirrored (-1) mapping at valve 0
+  flip1 / flip2                 Toggle full-range mapping at valve 0; moves that servo
   show       Print positions and defaults to copy into mtv_module.py
   save       Append current settings to the output file (changes also autosave)
   help       Show these commands
@@ -29,10 +29,11 @@ def positions(lead, offset, valve, gear_ratio, servo_range, direction1=1, direct
         raise ValueError("Valve angle must be 0–90 degrees; ratio and servo range must be positive")
     if direction1 not in (-1, 1) or direction2 not in (-1, 1):
         raise ValueError("Servo directions must be +1 or -1")
-    angles = lead + direction1 * valve * gear_ratio, lead + offset + direction2 * valve * gear_ratio
+    angles = lead + valve * gear_ratio, lead + offset + valve * gear_ratio
     if not all(0 <= angle <= servo_range for angle in angles):
         raise ValueError(f"Both servo positions must be within 0–{servo_range:g} degrees")
-    return angles
+    return tuple(angle if direction == 1 else servo_range - angle
+                 for angle, direction in zip(angles, (direction1, direction2)))
 
 
 def adjustment(line, lead, offset, valve, gear_ratio, direction1=1, direction2=1):
@@ -43,17 +44,15 @@ def adjustment(line, lead, offset, valve, gear_ratio, direction1=1, direction2=1
         raise ValueError("Expected a command and a number; type help for commands")
     command, value = parts[0], float(parts[1])
     if command == "servo1":
-        offset += lead + direction1 * valve * gear_ratio - value
-        lead = value - direction1 * valve * gear_ratio
+        offset += lead + valve * gear_ratio - value
+        lead = value - valve * gear_ratio
     elif command == "servo2":
-        offset = value - lead - direction2 * valve * gear_ratio
+        offset = value - lead - valve * gear_ratio
     elif command == "lead":
-        offset += (value - lead) * (direction1 * direction2 - 1)
         lead = value
     elif command == "offset":
         offset = value
     elif command == "jog":
-        offset += value * (direction1 * direction2 - 1)
         lead += value
     elif command == "trim":
         offset += value
@@ -75,8 +74,10 @@ def adjustment(line, lead, offset, valve, gear_ratio, direction1=1, direction2=1
 
 def settings_text(lead, offset, valve, gear_ratio, servo_range, direction1=1, direction2=1):
     servo1, servo2 = positions(lead, offset, valve, gear_ratio, servo_range, direction1, direction2)
-    text = (f"# lead zero={lead:.12g}, offset={offset:.12g}, valve={valve:.12g}; "
-            f"servo 1={servo1:.12g}, servo 2={servo2:.12g} degrees\n"
+    text = (f"# Logical angles: lead zero={lead:.12g}, offset={offset:.12g}, valve={valve:.12g}; "
+            f"servo 1={lead + valve * gear_ratio:.12g}, servo 2={lead + offset + valve * gear_ratio:.12g} degrees\n"
+            f"# PWM angles: servo 1={servo1:.12g}, servo 2={servo2:.12g} degrees\n"
+            "# Direction -1 maps each logical angle to DEFAULT_SERVO_RANGE - angle.\n"
             f"DEFAULT_CLOSE_ANGLE = {lead / gear_ratio:.12g}\n"
             f"DEFAULT_SERVO2_OFFSET = {offset:.12g}\n"
             f"DEFAULT_SERVO1_DIRECTION = {direction1:g}\n"
