@@ -129,3 +129,84 @@ DEFAULT_SERVO_RANGE = 355
 Copy the desired block's `DEFAULT_...` assignments into the corresponding definitions near the top of `mtv_module.py`. The procedure runners use those edited defaults when their programs are next started. The text file is a calibration record; it is not loaded automatically, and the tool does not edit `mtv_module.py` itself.
 
 If either servo lacks room for the full 0–90° valve stroke in its selected direction, the tool reports it in both the console and the saved block. Individual assembly positions can still be explored within servo limits; normal MTV initialization requires calibration that allows the full stroke. A `Full valve stroke: valid` entry checks numerical travel limits, not mechanical alignment. Printed positions are commanded values, not encoder feedback.
+
+## Assembly workflow: bare servos to a calibrated MTV
+
+This workflow starts with two bare servos, installs their pinions around the central valve gear, aligns servo 2, and then adjusts the valve's closed reference. The central gear has twice as many teeth as either servo gear, so the valve's 90° operating stroke requires 180° of travel from each servo.
+
+### 1. Check directions with the gears disengaged
+
+Identify servo 1 as the lead and servo 2 as the adjustable servo. With the gears off or disengaged, compare small increases and decreases in each servo's commanded angle from the same viewing direction.
+
+For ordinary external pinions driving the same central gear, both pinions must turn in the **same physical rotational sense**, while the central gear turns the other way. Mounting the servos on opposite sides of the central gear does not, by itself, require a software reversal. This follows from the two external meshes in the [gear-train direction rules](https://www.cs.cmu.edu/~rapidproto/mechanisms/chpt7.html). Use opposite software directions only if opposite numerical command changes produce the required physical motion on your installed servos. If identical servos face the same way and respond alike, their software directions should match.
+
+Choose each direction so increasing `valve N` will open the valve. Direction settings can be changed at `valve 0` with `direction1`, `direction2`, `flip1`, or `flip2`; changing the setting causes no movement at that reference.
+
+### 2. Establish starting references with adjustment margin
+
+Choose starting angles near the appropriate ends of each servo's usable travel, leaving room for fine adjustment. This is commanded positioning, not an automatic homing operation. The configured 0–355° range does not establish the actual mechanical stops of a particular servo.
+
+For the **verified opposite-command-direction case**, an example is servo 1 at **5°**, opening toward increasing angles, and servo 2 at **345°**, opening toward decreasing angles. This leaves 5° of lower-end margin on servo 1 and 10° of upper-end margin on servo 2, allowing small adjustments in either direction before assembly.
+
+Start the tool with the gears still disengaged:
+
+```bash
+python3 "ground-system/jetson stuff/jetson/mtv/calibrate_mtv.py" --lead 5 --offset 340 --direction1 1 --direction2 -1
+```
+
+The offset is `345 - 5 = 340` servo degrees. With these example settings, `valve 90` would command servo 1 to 185° and servo 2 to 165°. Both have the required 180° travel available. Leave the valve-angle setting at `0` while fitting the gears.
+
+Other direction combinations need different starting references. These are numerical examples using the configured range; choose margins appropriate to the actual servos:
+
+| Opening directions `(servo 1, servo 2)` | Lead zero | Servo 2 zero | `--offset` |
+| --- | --- | --- | --- |
+| `(+1, -1)` | 5° | 345° | `340` |
+| `(+1, +1)` | 5° | 10° | `5` |
+| `(-1, +1)` | 350° | 10° | `-340` |
+| `(-1, -1)` | 350° | 345° | `-5` |
+
+Starting near an end reserves travel in the opening direction; the adjustment margins reserve movement in the other direction. The software's valve operating range remains 0–90°.
+
+### 3. Fit the central gear and lead-servo gear
+
+Place the valve at its known closed reference and fit its central gear. Keep servo 1 at its chosen starting command. Fit servo 1's gear to the nearest suitable spline position and mesh it with the central gear. Leave small residual valve-zero error for the paired adjustment in step 5; do not force the spline or gear teeth into engagement.
+
+At this stage, servo 1 establishes the reference. Keep servo 2's gear disengaged until its spline and tooth alignment are ready.
+
+### 4. Adjust servo 2 to fit its spline and mesh
+
+Keep servo 1's command fixed. Use `servo2 N` for an absolute shaft position or small `trim N` adjustments to align servo 2's shaft with the gear's spline and its teeth with the central gear. For the 345° starting example:
+
+| Command | Adjustment |
+| --- | --- |
+| `servo2 344.5` | Set servo 2 to 344.5°; servo 1 stays fixed. |
+| `trim 0.1` | Increase servo 2's command by 0.1°. |
+| `trim -0.1` | Decrease servo 2's command by 0.1°. |
+
+Make these independent adjustments while servo 2's gear is disengaged enough to move freely, then seat and mesh it. If the pair is preloaded against itself, disengage servo 2's gear, correct its alignment, and reseat it. Once both gears are fully meshed, use paired movements for valve adjustment; an independent servo command can make the two actuators oppose each other through the gears.
+
+### 5. Fine-adjust the valve's closed reference
+
+With both gears meshed and `valve 0` selected, use small paired adjustments to locate the actual closed reference. For example, try `jog 0.2` or `jog -0.2` as needed. A 0.2° lead-servo adjustment corresponds to 0.1° of valve movement in magnitude with the 2:1 gearing. Servo 2 follows the selected relative direction.
+
+The displayed valve angle stays at `0` because `jog` adjusts the calibration of that reference. With opposing servo directions, the recorded offset changes numerically as well. Keep the newly printed lead and offset together; do not restore an earlier offset after moving the paired zero.
+
+### 6. Check both valve limits progressively
+
+Starting from the calibrated zero, check small opening commands such as `valve 1`, `valve 5`, and `valve 10`. Continue through the range only as the motion permits. Approach the open reference with smaller changes, for example `valve 88`, `valve 89`, `valve 89.5`, and finally `valve 90` if the mechanism has the remaining travel. Return toward `valve 0` and check closure again.
+
+If the closed reference needs correction, return to `valve 0`, make a small paired `jog` adjustment, and recheck both ends. **Moving the zero shifts both endpoints.** This tool assumes a 90° valve stroke; it does not calibrate the open and closed stops independently. If both endpoints cannot agree over that stroke, recheck the gear indexing, alignment, and actual valve travel before adopting the settings. Keep the gear ratio at the actual tooth-count ratio of 2.
+
+### 7. Save and transfer the final settings
+
+Return to the chosen closed reference, inspect the settings, and save a final snapshot:
+
+```text
+valve 0
+show
+save
+```
+
+Copy the final block's `DEFAULT_...` assignments from `mtv_calibration.txt` into `mtv_module.py`, including both servo directions. Check the numerical full-stroke result and the physical endpoints you just tested. `quit` stops PWM without another position command.
+
+Before the next startup with the gears assembled, use the updated defaults or pass the calibrated startup arguments explicitly. The saved text file is not loaded automatically.
