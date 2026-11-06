@@ -10,7 +10,7 @@ From the `PropulsiveLanders` directory:
 python3 "ground-system/jetson stuff/jetson/mtv/calibrate_mtv.py"
 ```
 
-The tool starts both servos at the saved calibration in `mtv_module.py`. With the current defaults, both start at **88 servo degrees** on BOARD pins **15 and 33**.
+The tool starts both servos at the saved calibration in `mtv_module.py`. With the current defaults, both start at **88 servo degrees** on BOARD pins **15 and 32**.
 
 To choose initial positions, specify the lead angle and the second servo's offset. This example starts servo 1 at 80° and servo 2 at 84°:
 
@@ -21,7 +21,7 @@ python3 "ground-system/jetson stuff/jetson/mtv/calibrate_mtv.py" --lead 80 --off
 | Startup option | Meaning | Default |
 | --- | --- | --- |
 | `--pin1 N` | Physical BOARD pin for servo 1, the lead servo. | `15` |
-| `--pin2 N` | Physical BOARD pin for servo 2, the adjusted servo. Must differ from pin 1. | `33` |
+| `--pin2 N` | Physical BOARD pin for servo 2, the adjusted servo. Must differ from pin 1. | `32` |
 | `--lead N` | Initial servo 1 position, in servo degrees. | `DEFAULT_CLOSE_ANGLE * DEFAULT_GEAR_RATIO` |
 | `--offset N` | Initial signed offset added to servo 1's position to obtain servo 2's position. | `DEFAULT_SERVO2_OFFSET` |
 | `--direction1 N` | Servo 1 direction: `1` increases its angle as the valve opens; `-1` decreases it. | `DEFAULT_SERVO1_DIRECTION` |

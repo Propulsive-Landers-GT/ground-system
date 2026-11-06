@@ -108,7 +108,7 @@ def main(argv=None):
         description="Position MTV servos independently or adjust their alignment and valve zero.",
         epilog=HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--pin1", type=int, default=15, help="Lead servo BOARD pin (default: 15)")
-    parser.add_argument("--pin2", type=int, default=33, help="Adjusted servo BOARD pin (default: 33)")
+    parser.add_argument("--pin2", type=int, default=32, help="Adjusted servo BOARD pin (default: 32)")
     parser.add_argument("--lead", type=float, help="Initial lead position in servo degrees (default: MTV calibration)")
     parser.add_argument("--offset", type=float, help="Initial servo 2 offset in servo degrees (default: MTV calibration)")
     parser.add_argument("--direction1", type=int, choices=(-1, 1), help="Servo 1 direction (default: MTV calibration)")
