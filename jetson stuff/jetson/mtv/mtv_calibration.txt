@@ -1,0 +1,13 @@
+
+# Calibration 2026-11-05T21:38:47-05:00
+# BOARD pins: servo1=15, servo2=32
+# Logical angles: lead zero=40, offset=5, valve=0; servo 1=40, servo 2=45 degrees
+# PWM angles: servo 1=315, servo 2=310 degrees
+# Direction -1 maps each logical angle to DEFAULT_SERVO_RANGE - angle.
+DEFAULT_CLOSE_ANGLE = 20
+DEFAULT_SERVO2_OFFSET = 5
+DEFAULT_SERVO1_DIRECTION = -1
+DEFAULT_SERVO2_DIRECTION = -1
+DEFAULT_GEAR_RATIO = 2
+DEFAULT_SERVO_RANGE = 355
+# Full valve stroke: valid

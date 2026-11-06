@@ -25,11 +25,11 @@ const int RCS_LDCL_SCK = 7;
  
 // In Arduino IDE, upload with false to the relay board and true to the
 // HX711 board. The Jetson opens one serial port for each role.
-const bool USE_LOADCELL = false;
+const bool USE_LOADCELL = true;
 bool engine_loadcell_send = false;
 bool nitrous_loadcell_send = false;
 bool rcs_loadcell_send = false;
-const bool debug = false;
+const bool debug = true;
 
 HX711 engine_loadcell;
 HX711 nitrous_loadcell;
@@ -114,7 +114,7 @@ void setup_starting_states(Procedure &proc) {
   switch (proc.procedure) { 
     case HOTFIRE:
       digitalWrite(OMV, LOW);
-      digitalWrite(PUISO, LOW);
+      digitalWrite(PUISO, HIGH);
       digitalWrite(IGV, LOW);
       digitalWrite(OFILL, LOW);
       digitalWrite(LFVENT, LOW);
@@ -130,7 +130,7 @@ void setup_starting_states(Procedure &proc) {
 
     case COLDFLOW:
       digitalWrite(OMV, LOW);
-      digitalWrite(PUISO, LOW);
+      digitalWrite(PUISO, HIGH);
       digitalWrite(IGV, LOW);
       digitalWrite(OFILL, LOW);
       digitalWrite(LFVENT, LOW);
@@ -269,7 +269,7 @@ void loop() {
           Serial.println("Resetting all to low");
         }
         digitalWrite(OMV, LOW);
-        digitalWrite(PUISO, LOW);
+        digitalWrite(PUISO, HIGH);
         digitalWrite(IGV, LOW);
         digitalWrite(OFILL, LOW);
         digitalWrite(LFVENT, LOW);
@@ -397,12 +397,12 @@ void loop() {
         if (debug) {
           Serial.println("Opening PUISO");
         }
-        digitalWrite(PUISO, HIGH);
+        digitalWrite(PUISO, LOW);
       } else if (command.action.equals("close")) {
         if (debug) {
           Serial.println("Closing PUISO");
         }
-        digitalWrite(PUISO, LOW);
+        digitalWrite(PUISO, HIGH);
       } else if (command.action.equals("status")) {
         int puiso_state = digitalRead(PUISO);
         String puiso_message = "PUISO is " + String(puiso_state);
